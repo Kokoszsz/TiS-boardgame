@@ -11,6 +11,7 @@ from hexwar.systems.test_system import PLAYER_A, PLAYER_B
 from tests.conftest import (
     assert_action_illegal,
     assert_action_legal,
+    assert_unit_at,
     do_actions,
     make_engine,
     make_unit,
@@ -146,3 +147,52 @@ class TestStackingLimits:
         ])
         beyond = MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(2, 1))
         assert_action_legal(engine, beyond)
+
+
+class TestMultiUnitHexSelection:
+    """Tests that each unit on a shared hex can independently move."""
+
+    def test_both_stacked_units_have_legal_moves(self):
+        """Two units on same hex both generate move actions."""
+        engine = make_engine(units=[
+            make_unit("u1", q=2, r=2, movement=2),
+            make_unit("u2", q=2, r=2, movement=3),
+        ])
+        legal = engine.get_legal_actions()
+        u1_moves = [a for a in legal if isinstance(a, MoveAction) and a.unit_id == "u1"]
+        u2_moves = [a for a in legal if isinstance(a, MoveAction) and a.unit_id == "u2"]
+        assert len(u1_moves) > 0
+        assert len(u2_moves) > 0
+        assert len(u2_moves) > len(u1_moves)  # more MP = more reachable hexes
+
+    def test_move_one_unit_from_stack_other_stays(self):
+        """Moving one unit doesn't affect the other on same hex."""
+        engine = make_engine(units=[
+            make_unit("u1", q=2, r=2, movement=2),
+            make_unit("u2", q=2, r=2, movement=2),
+        ])
+        do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
+        assert_unit_at(engine, "u1", 3, 2)
+        assert_unit_at(engine, "u2", 2, 2)
+
+    def test_moved_unit_exhausted_other_still_has_mp(self):
+        """After moving one unit to exhaustion, other unit still has full MP."""
+        engine = make_engine(units=[
+            make_unit("u1", q=2, r=2, movement=1),
+            make_unit("u2", q=2, r=2, movement=2),
+        ])
+        do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
+        remaining_mp = engine.state.metadata.get("remaining_mp", {})
+        assert remaining_mp.get("u1") == 0
+        assert "u2" not in remaining_mp  # not moved yet, full MP
+
+    def test_both_units_can_move_separately(self):
+        """Both stacked units can each make their own move in same phase."""
+        engine = make_engine(units=[
+            make_unit("u1", q=2, r=2, movement=2),
+            make_unit("u2", q=2, r=2, movement=2),
+        ])
+        do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
+        do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u2", target=HexCoord(2, 1)))
+        assert_unit_at(engine, "u1", 3, 2)
+        assert_unit_at(engine, "u2", 2, 1)

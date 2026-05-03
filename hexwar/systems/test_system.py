@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from hexwar.core.actions import Action, AttackAction, EndPhaseAction, MoveAction
-from hexwar.core.events import CombatResolved, Event, UnitDestroyed, UnitMoved
+from hexwar.core.actions import Action, AttackAction, EndPhaseAction, EntrenchAction, MoveAction
+from hexwar.core.events import CombatResolved, Event, UnitDestroyed, UnitEntrenched, UnitMoved
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import TerrainType
 from hexwar.core.pathfinding import reachable_hexes
@@ -21,11 +21,11 @@ class TestSystem(System):
     def __init__(self):
         self.phases = [
             PhaseDef(id="move_a", name="Player A Movement", player=PLAYER_A,
-                     allowed_actions=[MoveAction, EndPhaseAction]),
+                     allowed_actions=[MoveAction, EntrenchAction, EndPhaseAction]),
             PhaseDef(id="combat_a", name="Player A Combat", player=PLAYER_A,
                      allowed_actions=[AttackAction, EndPhaseAction]),
             PhaseDef(id="move_b", name="Player B Movement", player=PLAYER_B,
-                     allowed_actions=[MoveAction, EndPhaseAction]),
+                     allowed_actions=[MoveAction, EntrenchAction, EndPhaseAction]),
             PhaseDef(id="combat_b", name="Player B Combat", player=PLAYER_B,
                      allowed_actions=[AttackAction, EndPhaseAction]),
         ]
@@ -133,6 +133,19 @@ class TestSystem(System):
                         continue
                     actions.append(MoveAction(player=player, unit_id=unit.id, target=target))
 
+        if EntrenchAction in phase.allowed_actions:
+            remaining_mp = state.metadata.get("remaining_mp", {})
+            entrenched_hexes = state.metadata.get("entrenched", {})
+            for unit in state.units_of(player):
+                if unit.id in remaining_mp:
+                    continue
+                if unit.position in entrenched_hexes:
+                    continue
+                terrain = state.hex_map.get_terrain(unit.position)
+                if terrain and any(layer.type == TerrainType.SWAMP for layer in terrain):
+                    continue
+                actions.append(EntrenchAction(player=player, unit_id=unit.id))
+
         if AttackAction in phase.allowed_actions:
             for unit in state.units_of(player):
                 for nb in unit.position.neighbors():
@@ -149,6 +162,8 @@ class TestSystem(System):
     ) -> tuple[GameState, list[Event]]:
         if isinstance(action, MoveAction):
             return self._apply_move(state, action)
+        if isinstance(action, EntrenchAction):
+            return self._apply_entrench(state, action)
         if isinstance(action, AttackAction):
             return self._apply_attack(state, action)
         return state, []
@@ -193,7 +208,31 @@ class TestSystem(System):
         new_state = state.with_unit_moved(action.unit_id, action.target)
         new_remaining = {**new_state.metadata.get("remaining_mp", {}), action.unit_id: new_mp}
         new_state = new_state.with_metadata("remaining_mp", new_remaining)
+
+        entrenched = dict(new_state.metadata.get("entrenched", {}))
+        if action.target in entrenched and entrenched[action.target] != player:
+            del entrenched[action.target]
+            new_state = new_state.with_metadata("entrenched", entrenched)
+        if old_pos in entrenched and entrenched[old_pos] == player:
+            friendly_left = any(u.player == player for u in new_state.units_at(old_pos))
+            if not friendly_left:
+                del entrenched[old_pos]
+                new_state = new_state.with_metadata("entrenched", entrenched)
+
         return new_state, [UnitMoved(unit_id=action.unit_id, from_hex=old_pos, to_hex=action.target)]
+
+    def _apply_entrench(
+        self, state: GameState, action: EntrenchAction
+    ) -> tuple[GameState, list[Event]]:
+        unit = state.get_unit(action.unit_id)
+        if unit is None:
+            return state, []
+        entrenched = dict(state.metadata.get("entrenched", {}))
+        entrenched[unit.position] = unit.player
+        new_state = state.with_metadata("entrenched", entrenched)
+        remaining_mp = {**new_state.metadata.get("remaining_mp", {}), action.unit_id: 0}
+        new_state = new_state.with_metadata("remaining_mp", remaining_mp)
+        return new_state, [UnitEntrenched(unit_id=action.unit_id, at_hex=unit.position)]
 
     def _apply_attack(
         self, state: GameState, action: AttackAction

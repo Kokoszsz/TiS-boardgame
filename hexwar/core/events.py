@@ -34,6 +34,12 @@ class UnitDestroyed(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class UnitEntrenched(Event):
+    unit_id: UnitId
+    at_hex: HexCoord
+
+
+@dataclass(frozen=True, slots=True)
 class PhaseChanged(Event):
     phase_id: str
     phase_name: str

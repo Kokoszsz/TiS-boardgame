@@ -24,5 +24,10 @@ class AttackAction(Action):
 
 
 @dataclass(frozen=True, slots=True)
+class EntrenchAction(Action):
+    unit_id: UnitId
+
+
+@dataclass(frozen=True, slots=True)
 class EndPhaseAction(Action):
     pass
