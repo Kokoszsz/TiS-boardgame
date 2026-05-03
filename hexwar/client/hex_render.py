@@ -5,7 +5,7 @@ import math
 import pygame
 
 from hexwar.core.hex import HexCoord
-from hexwar.core.map import TerrainType
+from hexwar.core.map import TerrainLayer, TerrainType
 
 
 HEX_SIZE = 40
@@ -18,6 +18,16 @@ TERRAIN_COLORS: dict[TerrainType, tuple[int, int, int]] = {
     TerrainType.SWAMP: (100, 140, 120),
     TerrainType.MOUNTAIN: (140, 120, 100),
     TerrainType.WATER: (80, 130, 200),
+}
+
+TERRAIN_SYMBOLS: dict[TerrainType, str] = {
+    TerrainType.PLAIN: "",
+    TerrainType.FOREST: "F",
+    TerrainType.HILL: "H",
+    TerrainType.CITY: "C",
+    TerrainType.SWAMP: "S",
+    TerrainType.MOUNTAIN: "M",
+    TerrainType.WATER: "W",
 }
 
 PLAYER_COLORS: dict[str, tuple[int, int, int]] = {
@@ -77,6 +87,29 @@ def draw_highlight(
     highlight_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
     pygame.draw.polygon(highlight_surf, color, corners)
     surface.blit(highlight_surf, (0, 0))
+
+
+def draw_terrain_labels(
+    surface: pygame.Surface,
+    coord: HexCoord,
+    layers: list[TerrainLayer],
+    offset: tuple[float, float],
+    size: float = HEX_SIZE,
+    font: pygame.font.Font | None = None,
+) -> None:
+    symbols = [TERRAIN_SYMBOLS.get(layer.type, "?") for layer in layers if TERRAIN_SYMBOLS.get(layer.type)]
+    if not symbols:
+        return
+    label = " ".join(symbols)
+    if font is None:
+        font = pygame.font.SysFont("consolas", 11)
+    px, py = hex_to_pixel(coord, size)
+    sx = px + offset[0]
+    sy = py + offset[1]
+    text = font.render(label, True, (255, 255, 255))
+    text_shadow = font.render(label, True, (0, 0, 0))
+    surface.blit(text_shadow, (sx - text.get_width() // 2 + 1, sy - size * 0.55 + 1))
+    surface.blit(text, (sx - text.get_width() // 2, sy - size * 0.55))
 
 
 def _hex_round(fq: float, fr: float) -> HexCoord:

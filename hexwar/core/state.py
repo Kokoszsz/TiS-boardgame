@@ -113,6 +113,21 @@ class GameState:
             metadata=self.metadata,
         )
 
+    def with_metadata(self, key: str, value: Any) -> GameState:
+        new_metadata = {**self.metadata, key: value}
+        return GameState(
+            scenario_id=self.scenario_id,
+            scenario_name=self.scenario_name,
+            system_id=self.system_id,
+            hex_map=self.hex_map,
+            units=self.units,
+            units_by_hex=self.units_by_hex,
+            turn=self.turn,
+            phase_index=self.phase_index,
+            active_player=self.active_player,
+            metadata=new_metadata,
+        )
+
     def with_unit_stats(self, unit_id: UnitId, **updates) -> GameState:
         unit = self.units[unit_id]
         new_unit = unit.with_stats(**updates)

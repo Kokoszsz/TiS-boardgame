@@ -18,6 +18,7 @@ from hexwar.client.hex_render import (
     TERRAIN_COLORS,
     draw_hex,
     draw_highlight,
+    draw_terrain_labels,
     hex_to_pixel,
     pixel_to_hex,
 )
@@ -32,6 +33,7 @@ TEXT_COLOR = (220, 220, 220)
 HIGHLIGHT_MOVE = (100, 200, 100, 80)
 HIGHLIGHT_SELECT = (255, 255, 100, 120)
 HIGHLIGHT_ATTACK = (255, 80, 80, 100)
+HIGHLIGHT_ZOC = (255, 50, 50, 60)
 
 
 class PygameClient:
@@ -48,6 +50,7 @@ class PygameClient:
         self.selected_unit_id: str | None = None
         self.legal_moves: set[HexCoord] = set()
         self.legal_attacks: dict[HexCoord, str] = {}
+        self.enemy_zoc: set[HexCoord] = set()
         self.event_log: list[str] = []
         self.dragging = False
         self.drag_start = (0, 0)
@@ -133,12 +136,21 @@ class PygameClient:
         self.selected_unit_id = None
         self.legal_moves.clear()
         self.legal_attacks.clear()
+        self.enemy_zoc.clear()
 
     def _compute_legal_targets(self) -> None:
         self.legal_moves.clear()
         self.legal_attacks.clear()
+        self.enemy_zoc.clear()
         if not self.selected_unit_id:
             return
+
+        unit = self.engine.state.get_unit(self.selected_unit_id)
+        if unit:
+            zoc_map = self.engine.system._enemy_zoc_map(
+                self.engine.state, unit.player
+            )
+            self.enemy_zoc = set(zoc_map.keys())
 
         legal = self.engine.get_legal_actions()
         for action in legal:
@@ -198,13 +210,20 @@ class PygameClient:
 
     def _draw_map(self) -> None:
         state = self.engine.state
+        label_font = pygame.font.SysFont("consolas", 11)
         for coord, layers in state.hex_map.terrain.items():
             color = TERRAIN_COLORS.get(TerrainType.PLAIN)
             if layers:
                 color = TERRAIN_COLORS.get(layers[0].type, color)
             draw_hex(self.screen, coord, color, self.camera_offset)
+            if layers and (len(layers) > 1 or layers[0].type != TerrainType.PLAIN):
+                draw_terrain_labels(self.screen, coord, layers, self.camera_offset, font=label_font)
 
     def _draw_highlights(self) -> None:
+        for coord in self.enemy_zoc:
+            if coord in self.engine.state.hex_map.all_coords():
+                draw_highlight(self.screen, coord, HIGHLIGHT_ZOC, self.camera_offset)
+
         if self.selected_unit_id:
             unit = self.engine.state.get_unit(self.selected_unit_id)
             if unit:
@@ -275,6 +294,9 @@ def build_test_scenario() -> Engine:
     hex_map.set_terrain(HexCoord(3, 4), [TerrainLayer(TerrainType.HILL)])
     hex_map.set_terrain(HexCoord(5, 2), [TerrainLayer(TerrainType.CITY)])
     hex_map.set_terrain(HexCoord(2, 5), [TerrainLayer(TerrainType.SWAMP)])
+    hex_map.set_terrain(HexCoord(4, 4), [TerrainLayer(TerrainType.FOREST), TerrainLayer(TerrainType.HILL)])
+    hex_map.set_terrain(HexCoord(6, 1), [TerrainLayer(TerrainType.CITY), TerrainLayer(TerrainType.HILL)])
+    hex_map.set_terrain(HexCoord(1, 6), [TerrainLayer(TerrainType.MOUNTAIN)])
 
     units = [
         Unit(id="inf_a1", name="1st Infantry A", type_id="infantry",

@@ -56,6 +56,9 @@ class HexCoord:
                 results.add(HexCoord(self.q + q, self.r + r))
         return results
 
+    def __lt__(self, other: HexCoord) -> bool:
+        return (self.q, self.r) < (other.q, other.r)
+
     def __repr__(self) -> str:
         return f"Hex({self.q},{self.r})"
 
