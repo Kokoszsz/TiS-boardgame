@@ -29,5 +29,21 @@ class EntrenchAction(Action):
 
 
 @dataclass(frozen=True, slots=True)
+class DeclareAttackAction(Action):
+    attacker_ids: tuple[UnitId, ...]
+    defender_hexes: tuple[HexCoord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UndeclareAttackAction(Action):
+    battle_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResolveBattleAction(Action):
+    battle_id: int
+
+
+@dataclass(frozen=True, slots=True)
 class EndPhaseAction(Action):
     pass

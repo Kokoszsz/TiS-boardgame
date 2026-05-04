@@ -2,8 +2,12 @@
 
 import pytest
 
-from hexwar.core.actions import AttackAction, EndPhaseAction, MoveAction
-from hexwar.core.events import CombatResolved, PhaseChanged, TurnChanged, UnitDestroyed, UnitMoved
+from hexwar.core.actions import (
+    AttackAction, DeclareAttackAction, EndPhaseAction, MoveAction, UndeclareAttackAction,
+)
+from hexwar.core.events import (
+    AttackDeclared, AttackUndeclared, CombatResolved, PhaseChanged, TurnChanged, UnitDestroyed, UnitMoved,
+)
 from hexwar.core.hex import HexCoord
 from hexwar.systems.test_system import PLAYER_A, PLAYER_B
 
@@ -82,39 +86,55 @@ class TestMovement:
 
 class TestCombat:
     def test_stronger_attacker_destroys_defender(self):
+        """Declaration creates a battle — resolution not implemented yet, test declaration event."""
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=5),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=3),
         ])
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # skip to combat
-        attack = AttackAction(player=PLAYER_A, attacker_id="a1", defender_id="b1")
-        events = engine.submit_action(attack)
-        assert_unit_destroyed(engine, "b1")
-        assert_unit_exists(engine, "a1")
-        assert any(isinstance(e, CombatResolved) and e.result == "attacker_wins" for e in events)
+        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # skip to combat_a
+        declare = DeclareAttackAction(
+            player=PLAYER_A,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+        )
+        events = engine.submit_action(declare)
+        assert any(isinstance(e, AttackDeclared) for e in events)
+        declared_event = next(e for e in events if isinstance(e, AttackDeclared))
+        assert declared_event.attacker_ids == ("a1",)
+        assert declared_event.defender_ids == ("b1",)
+        assert declared_event.attack_ratio == "5:3"
 
     def test_stronger_defender_destroys_attacker(self):
+        """Declaration with weaker attacker still valid."""
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=2),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=5),
         ])
         do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        attack = AttackAction(player=PLAYER_A, attacker_id="a1", defender_id="b1")
-        events = engine.submit_action(attack)
-        assert_unit_destroyed(engine, "a1")
-        assert_unit_exists(engine, "b1")
+        declare = DeclareAttackAction(
+            player=PLAYER_A,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+        )
+        events = engine.submit_action(declare)
+        declared_event = next(e for e in events if isinstance(e, AttackDeclared))
+        assert declared_event.attack_ratio == "2:5"
 
     def test_equal_strength_tie(self):
+        """Declaration with equal strength."""
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=3),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=3),
         ])
         do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        attack = AttackAction(player=PLAYER_A, attacker_id="a1", defender_id="b1")
-        events = engine.submit_action(attack)
-        assert_unit_exists(engine, "a1")
-        assert_unit_exists(engine, "b1")
-        assert any(isinstance(e, CombatResolved) and e.result == "tie" for e in events)
+        declare = DeclareAttackAction(
+            player=PLAYER_A,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+        )
+        events = engine.submit_action(declare)
+        declared_event = next(e for e in events if isinstance(e, AttackDeclared))
+        assert declared_event.attack_ratio == "3:3"
 
     def test_cannot_attack_non_adjacent(self):
         engine = make_engine(units=[
@@ -122,8 +142,12 @@ class TestCombat:
             make_unit("b1", player=PLAYER_B, q=4, r=4, strength=3),
         ])
         do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        attack = AttackAction(player=PLAYER_A, attacker_id="a1", defender_id="b1")
-        assert_action_illegal(engine, attack)
+        declare = DeclareAttackAction(
+            player=PLAYER_A,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(4, 4),),
+        )
+        assert_action_illegal(engine, declare)
 
 
 class TestUndo:
@@ -134,16 +158,21 @@ class TestUndo:
         engine.undo()
         assert_unit_at(engine, "u1", 1, 1)
 
-    def test_undo_restores_destroyed_unit(self):
+    def test_undo_restores_declared_battle(self):
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=5),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=3),
         ])
         do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        engine.submit_action(AttackAction(player=PLAYER_A, attacker_id="a1", defender_id="b1"))
-        assert_unit_destroyed(engine, "b1")
+        declare = DeclareAttackAction(
+            player=PLAYER_A,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+        )
+        engine.submit_action(declare)
+        assert engine.state.metadata.get("battles")
         engine.undo()
-        assert_unit_exists(engine, "b1")
+        assert not engine.state.metadata.get("battles")
 
     def test_undo_empty_history_returns_none(self):
         engine = make_engine(units=[make_unit("u1", player=PLAYER_A, q=1, r=1)])

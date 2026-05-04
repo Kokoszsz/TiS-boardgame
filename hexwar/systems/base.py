@@ -54,3 +54,8 @@ class System(ABC):
         self, state: GameState
     ) -> tuple[GameState, list[Event]]:
         return state, []
+
+    def should_advance_phase(self, state: GameState) -> bool:
+        """Called when EndPhaseAction is submitted. Return False to block
+        phase advance and route EndPhaseAction through apply_action instead."""
+        return True

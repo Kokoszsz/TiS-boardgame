@@ -125,3 +125,27 @@ def _hex_round(fq: float, fr: float) -> HexCoord:
     elif r_diff > s_diff:
         r = -q - s
     return HexCoord(q, r)
+
+
+def draw_arrow(
+    surface: pygame.Surface,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    color: tuple[int, int, int] | tuple[int, int, int, int] = (255, 200, 50),
+    width: int = 2,
+    head_size: int = 8,
+) -> None:
+    """Draw an arrow from start to end with an arrowhead."""
+    pygame.draw.line(surface, color, start, end, width)
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    dist = math.hypot(dx, dy)
+    if dist < 1:
+        return
+    ux, uy = dx / dist, dy / dist
+    # Arrowhead
+    left = (end[0] - head_size * ux + head_size * 0.5 * uy,
+            end[1] - head_size * uy - head_size * 0.5 * ux)
+    right = (end[0] - head_size * ux - head_size * 0.5 * uy,
+             end[1] - head_size * uy + head_size * 0.5 * ux)
+    pygame.draw.polygon(surface, color, [end, left, right])

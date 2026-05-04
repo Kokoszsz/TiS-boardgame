@@ -51,8 +51,19 @@ class Engine:
         all_events: list[Event] = []
 
         if isinstance(action, EndPhaseAction):
-            events = self._advance_phase()
-            all_events.extend(events)
+            if self._system.should_advance_phase(self._state):
+                events = self._advance_phase()
+                all_events.extend(events)
+            else:
+                # System wants to handle EndPhaseAction itself (e.g. sub-phase transition)
+                legal = self.get_legal_actions()
+                if not any(self._actions_equal(action, la) for la in legal):
+                    raise ValueError(f"Illegal action: {action}")
+                new_state, events = self._system.apply_action(
+                    self._state, action, self._rng
+                )
+                self._state = new_state
+                all_events.extend(events)
         else:
             legal = self.get_legal_actions()
             if not any(self._actions_equal(action, la) for la in legal):

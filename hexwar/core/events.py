@@ -49,3 +49,29 @@ class PhaseChanged(Event):
 @dataclass(frozen=True, slots=True)
 class TurnChanged(Event):
     turn: int
+
+
+@dataclass(frozen=True, slots=True)
+class AttackDeclared(Event):
+    battle_id: int
+    attacker_ids: tuple[str, ...]
+    defender_ids: tuple[str, ...]
+    attack_ratio: str
+
+
+@dataclass(frozen=True, slots=True)
+class AttackUndeclared(Event):
+    battle_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class BattleResolved(Event):
+    battle_id: int
+    attacker_ids: tuple[str, ...]
+    defender_ids: tuple[str, ...]
+    attack_strength: int
+    defense_strength: int
+    dice_roll: tuple[int, int]
+    dice_total: int
+    result: str
+    details: dict[str, Any] | None = None

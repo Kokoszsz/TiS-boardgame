@@ -5,7 +5,10 @@ import sys
 
 import pygame
 
-from hexwar.core.actions import AttackAction, EndPhaseAction, EntrenchAction, MoveAction
+from hexwar.core.actions import (
+    AttackAction, DeclareAttackAction, EndPhaseAction,
+    EntrenchAction, MoveAction, ResolveBattleAction, UndeclareAttackAction,
+)
 from hexwar.core.engine import Engine
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
@@ -16,6 +19,7 @@ from hexwar.client.hex_render import (
     HEX_SIZE,
     PLAYER_COLORS,
     TERRAIN_COLORS,
+    draw_arrow,
     draw_hex,
     draw_highlight,
     draw_terrain_labels,
@@ -34,6 +38,12 @@ HIGHLIGHT_MOVE = (100, 200, 100, 80)
 HIGHLIGHT_SELECT = (255, 255, 100, 120)
 HIGHLIGHT_ATTACK = (255, 80, 80, 100)
 HIGHLIGHT_ZOC = (255, 50, 50, 60)
+HIGHLIGHT_OBLIGATED = (255, 160, 0, 90)
+HIGHLIGHT_SELECTED_ATTACKER = (255, 200, 50, 100)
+BATTLE_ARROW_COLOR = (255, 200, 50)
+BATTLE_ARROW_SELECTED = (255, 255, 150)
+BATTLE_RESOLVED_COLOR = (100, 200, 100)
+BATTLE_UNRESOLVED_COLOR = (255, 200, 50)
 
 PANEL_BG = (40, 40, 50, 230)
 PANEL_ITEM_BG = (60, 60, 70)
@@ -69,6 +79,10 @@ class PygameClient:
         self.unit_picker_item_rects: list[pygame.Rect] = []
         self.can_entrench = False
 
+        # Combat declaration UI state
+        self.selected_attackers: list[str] = []  # multi-select for declaration
+        self.selected_battle_id: int | None = None  # for undeclare
+
     def run(self) -> None:
         running = True
         while running:
@@ -102,6 +116,8 @@ class PygameClient:
                         self._do_entrench()
                     elif event.key == pygame.K_u:
                         self._undo()
+                    elif event.key == pygame.K_d:
+                        self._undeclare_selected()
                     elif event.key == pygame.K_q:
                         running = False
 
@@ -127,6 +143,16 @@ class PygameClient:
 
         if clicked not in self.engine.state.hex_map.all_coords():
             self._deselect()
+            return
+
+        # --- Combat declaration mode ---
+        if self._in_declaration_mode():
+            self._handle_declaration_click(clicked)
+            return
+
+        # --- Combat resolution mode ---
+        if self._in_resolution_mode():
+            self._handle_resolution_click(clicked)
             return
 
         if self.selected_unit_id and clicked in self.legal_moves:
@@ -194,6 +220,242 @@ class PygameClient:
         self.legal_attacks.clear()
         self.enemy_zoc.clear()
         self._close_picker()
+        self.selected_attackers.clear()
+        self.selected_battle_id = None
+
+    # ------------------------------------------------------------------
+    # Combat declaration mode
+    # ------------------------------------------------------------------
+
+    def _in_declaration_mode(self) -> bool:
+        return self.engine.state.metadata.get("combat_sub_phase") == "declaration"
+
+    def _in_resolution_mode(self) -> bool:
+        return self.engine.state.metadata.get("combat_sub_phase") == "resolution"
+
+    def _handle_declaration_click(self, clicked: HexCoord) -> None:
+        """Handle clicks during combat declaration sub-phase."""
+        player = self.engine.state.active_player
+        shift = pygame.key.get_mods() & pygame.KMOD_SHIFT
+
+        units_here = self.engine.state.units_at(clicked)
+        enemies = [u for u in units_here if u.player != player]
+        battles = self.engine.state.metadata.get("battles", [])
+
+        # If we have attackers selected and clicked on enemy hex — declare/merge attack
+        if enemies and self.selected_attackers:
+            self._do_declare_attack(clicked)
+            return
+
+        # If a battle is selected and clicked on a new enemy hex — extend defender hexes (fan-out)
+        if enemies and self.selected_battle_id is not None:
+            self._extend_battle_defenders(clicked)
+            return
+
+        # Check if clicked on a declared battle's defender hex (to select that battle)
+        for battle in battles:
+            if clicked in battle.get("defender_hexes", ()):
+                self.selected_battle_id = battle["id"]
+                self.selected_attackers.clear()
+                return
+
+        # Check if clicked on a friendly unit — toggle multi-select
+        friendly = [u for u in units_here if u.player == player]
+        committed = self.engine.state.metadata.get("committed_attackers", set())
+
+        if friendly:
+            # Check if any friendly unit here is a committed attacker — select that battle
+            committed_here = [u for u in friendly if u.id in committed]
+            if committed_here and not shift:
+                for battle in battles:
+                    if committed_here[0].id in battle.get("attacker_ids", ()):
+                        self.selected_battle_id = battle["id"]
+                        self.selected_attackers.clear()
+                        return
+
+            # Only consider uncommitted units for new declarations
+            available = [u for u in friendly if u.id not in committed]
+            if available:
+                uid = available[0].id
+                if shift:
+                    # Toggle in multi-select
+                    if uid in self.selected_attackers:
+                        self.selected_attackers.remove(uid)
+                    else:
+                        self.selected_attackers.append(uid)
+                else:
+                    if not self.selected_attackers:
+                        self.selected_attackers = [uid]
+                    else:
+                        if uid in self.selected_attackers:
+                            self.selected_attackers.remove(uid)
+                        else:
+                            self.selected_attackers = [uid]
+                self.selected_battle_id = None
+                return
+
+        # Clicked empty — deselect
+        self.selected_attackers.clear()
+        self.selected_battle_id = None
+
+    def _do_declare_attack(self, target_hex: HexCoord) -> None:
+        """Submit DeclareAttackAction with selected attackers → target hex.
+
+        If the target hex already has a declared battle, merge: undeclare
+        the existing battle then re-declare with combined attackers.
+        """
+        player = self.engine.state.active_player
+        new_attackers = list(self.selected_attackers)
+
+        # Check if target hex is already part of an existing battle
+        battles = self.engine.state.metadata.get("battles", [])
+        existing_battle = None
+        for battle in battles:
+            if target_hex in battle.get("defender_hexes", ()):
+                existing_battle = battle
+                break
+
+        if existing_battle:
+            # Merge: combine existing attackers with newly selected ones
+            old_attackers = list(existing_battle["attacker_ids"])
+            merged = list(set(old_attackers + new_attackers))
+            # Undeclare the old battle first
+            undeclare = UndeclareAttackAction(player=player, battle_id=existing_battle["id"])
+            self.engine.submit_action(undeclare)
+            # Now declare with merged attackers
+            action = DeclareAttackAction(
+                player=player,
+                attacker_ids=tuple(sorted(merged)),
+                defender_hexes=tuple(existing_battle["defender_hexes"]),
+            )
+        else:
+            action = DeclareAttackAction(
+                player=player,
+                attacker_ids=tuple(sorted(new_attackers)),
+                defender_hexes=(target_hex,),
+            )
+
+        # Check if action is legal
+        legal = self.engine.get_legal_actions()
+        if any(a == action for a in legal):
+            events = self.engine.submit_action(action)
+            for e in events:
+                self.event_log.append(str(e))
+            self.selected_attackers.clear()
+        else:
+            # If merge failed, try to re-declare the original battle
+            if existing_battle:
+                restore = DeclareAttackAction(
+                    player=player,
+                    attacker_ids=tuple(existing_battle["attacker_ids"]),
+                    defender_hexes=tuple(existing_battle["defender_hexes"]),
+                )
+                self.engine.submit_action(restore)
+            self.event_log.append("[INVALID] Cannot declare that attack")
+
+    def _extend_battle_defenders(self, target_hex: HexCoord) -> None:
+        """Add a new defender hex to the currently selected battle (fan-out)."""
+        player = self.engine.state.active_player
+        battles = self.engine.state.metadata.get("battles", [])
+        battle = None
+        for b in battles:
+            if b["id"] == self.selected_battle_id:
+                battle = b
+                break
+        if battle is None:
+            return
+
+        # Don't add if already in the battle
+        if target_hex in battle.get("defender_hexes", ()):
+            return
+
+        # Undeclare old, re-declare with extended defender hexes
+        old_attacker_ids = tuple(battle["attacker_ids"])
+        old_defender_hexes = tuple(battle["defender_hexes"])
+        new_defender_hexes = tuple(sorted(set(old_defender_hexes) | {target_hex}))
+
+        undeclare = UndeclareAttackAction(player=player, battle_id=self.selected_battle_id)
+        self.engine.submit_action(undeclare)
+
+        action = DeclareAttackAction(
+            player=player,
+            attacker_ids=old_attacker_ids,
+            defender_hexes=new_defender_hexes,
+        )
+        legal = self.engine.get_legal_actions()
+        if any(a == action for a in legal):
+            events = self.engine.submit_action(action)
+            for e in events:
+                self.event_log.append(str(e))
+            self.selected_battle_id = None
+        else:
+            # Restore original battle
+            restore = DeclareAttackAction(
+                player=player,
+                attacker_ids=old_attacker_ids,
+                defender_hexes=old_defender_hexes,
+            )
+            self.engine.submit_action(restore)
+            self.event_log.append("[INVALID] Cannot extend battle to that hex")
+
+    def _undeclare_selected(self) -> None:
+        """Undeclare the currently selected battle (press D)."""
+        if not self._in_declaration_mode():
+            return
+        if self.selected_battle_id is None:
+            return
+        action = UndeclareAttackAction(
+            player=self.engine.state.active_player,
+            battle_id=self.selected_battle_id,
+        )
+        events = self.engine.submit_action(action)
+        for e in events:
+            self.event_log.append(str(e))
+        self.selected_battle_id = None
+
+    # ------------------------------------------------------------------
+    # Combat resolution mode
+    # ------------------------------------------------------------------
+
+    def _handle_resolution_click(self, clicked: HexCoord) -> None:
+        """Handle clicks during combat resolution sub-phase.
+        Click on a battle's defender hex to resolve it."""
+        state = self.engine.state
+        battles = state.metadata.get("battles", [])
+
+        for battle in battles:
+            if battle.get("resolved"):
+                continue
+            if clicked in battle.get("defender_hexes", ()):
+                self._do_resolve_battle(battle["id"])
+                return
+            # Also allow clicking attacker hexes
+            for uid in battle.get("attacker_ids", ()):
+                unit = state.get_unit(uid)
+                if unit and unit.position == clicked:
+                    self._do_resolve_battle(battle["id"])
+                    return
+
+    def _do_resolve_battle(self, battle_id: int) -> None:
+        """Submit ResolveBattleAction for the given battle."""
+        action = ResolveBattleAction(
+            player=self.engine.state.active_player,
+            battle_id=battle_id,
+        )
+        legal = self.engine.get_legal_actions()
+        if any(a == action for a in legal):
+            events = self.engine.submit_action(action)
+            for e in events:
+                from hexwar.core.events import BattleResolved
+                if isinstance(e, BattleResolved):
+                    self.event_log.append(
+                        f"Battle #{e.battle_id}: {e.attack_strength}v{e.defense_strength} "
+                        f"dice={e.dice_roll[0]}+{e.dice_roll[1]}={e.dice_total} → {e.result}"
+                    )
+                else:
+                    self.event_log.append(str(e))
+        else:
+            self.event_log.append("[INVALID] Cannot resolve that battle")
 
     def _compute_legal_targets(self) -> None:
         self.legal_moves.clear()
@@ -260,6 +522,18 @@ class PygameClient:
         self._select_unit(self.selected_unit_id)
 
     def _end_phase(self) -> None:
+        # Block if in declaration mode and obligations not met
+        if self._in_declaration_mode():
+            if not self.engine.state.metadata.get("declaration_complete", False):
+                self.event_log.append("[BLOCKED] Must declare all obligated attacks first")
+                return
+        # Block if in resolution mode and battles remain
+        if self._in_resolution_mode():
+            unresolved = [b for b in self.engine.state.metadata.get("battles", [])
+                          if not b.get("resolved")]
+            if unresolved:
+                self.event_log.append(f"[BLOCKED] {len(unresolved)} battle(s) still unresolved")
+                return
         action = EndPhaseAction(player=self.engine.state.active_player)
         events = self.engine.submit_action(action)
         for e in events:
@@ -277,6 +551,10 @@ class PygameClient:
         self._draw_map()
         self._draw_highlights()
         self._draw_units()
+        if self._in_declaration_mode():
+            self._draw_declaration_overlay()
+        if self._in_resolution_mode():
+            self._draw_resolution_overlay()
         self._draw_ui()
         if self.unit_picker_open:
             self._draw_unit_picker()
@@ -339,6 +617,33 @@ class PygameClient:
         for coord in self.legal_attacks:
             draw_highlight(self.screen, coord, HIGHLIGHT_ATTACK, self.camera_offset)
 
+        # Declaration mode: highlight obligated units and selected attackers
+        if self._in_declaration_mode():
+            state = self.engine.state
+            player = state.active_player
+            obligated_attackers = state.metadata.get("obligated_attackers", set())
+            committed_attackers = state.metadata.get("committed_attackers", set())
+            obligated_enemies = state.metadata.get("obligated_enemies", set())
+            committed_defenders = state.metadata.get("committed_defenders", set())
+
+            # Orange highlight on units that still need to attack
+            for uid in obligated_attackers - committed_attackers:
+                unit = state.get_unit(uid)
+                if unit:
+                    draw_highlight(self.screen, unit.position, HIGHLIGHT_OBLIGATED, self.camera_offset)
+
+            # Orange highlight on enemies that still need to be attacked
+            for uid in obligated_enemies - committed_defenders:
+                unit = state.get_unit(uid)
+                if unit:
+                    draw_highlight(self.screen, unit.position, HIGHLIGHT_OBLIGATED, self.camera_offset)
+
+            # Yellow highlight on currently selected attackers
+            for uid in self.selected_attackers:
+                unit = state.get_unit(uid)
+                if unit:
+                    draw_highlight(self.screen, unit.position, HIGHLIGHT_SELECTED_ATTACKER, self.camera_offset)
+
     def _is_unit_exhausted(self, unit: Unit) -> bool:
         remaining_mp = self.engine.state.metadata.get("remaining_mp", {})
         return remaining_mp.get(unit.id, -1) == 0
@@ -394,6 +699,128 @@ class PygameClient:
                 pygame.draw.circle(self.screen, (255, 240, 100),
                                    (int(base_sx), int(base_sy) + 20), 5, 1)
 
+    def _draw_declaration_overlay(self) -> None:
+        """Draw arrows and ratio labels for declared battles."""
+        state = self.engine.state
+        battles = state.metadata.get("battles", [])
+
+        for battle in battles:
+            attacker_ids = battle.get("attacker_ids", ())
+            defender_hexes = battle.get("defender_hexes", ())
+            defender_ids = battle.get("defender_ids", ())
+            battle_id = battle.get("id")
+
+            is_selected = (battle_id == self.selected_battle_id)
+            arrow_color = BATTLE_ARROW_SELECTED if is_selected else BATTLE_ARROW_COLOR
+
+            # Compute defender center pixel
+            if not defender_hexes:
+                continue
+            def_px_sum, def_py_sum = 0.0, 0.0
+            for dh in defender_hexes:
+                dpx, dpy = hex_to_pixel(dh, HEX_SIZE)
+                def_px_sum += dpx + self.camera_offset[0]
+                def_py_sum += dpy + self.camera_offset[1]
+            def_cx = def_px_sum / len(defender_hexes)
+            def_cy = def_py_sum / len(defender_hexes)
+
+            # Draw arrow from each attacker to defender center
+            for uid in attacker_ids:
+                unit = state.get_unit(uid)
+                if not unit:
+                    continue
+                apx, apy = hex_to_pixel(unit.position, HEX_SIZE)
+                ax = apx + self.camera_offset[0]
+                ay = apy + self.camera_offset[1]
+                draw_arrow(self.screen, (ax, ay), (def_cx, def_cy), color=arrow_color, width=2)
+
+            # Draw ratio label at midpoint
+            atk_str = sum(
+                state.get_unit(uid).stats.get("strength", 1)
+                for uid in attacker_ids if state.get_unit(uid)
+            )
+            def_str = sum(
+                state.get_unit(uid).stats.get("strength", 1)
+                for uid in defender_ids if state.get_unit(uid)
+            )
+            ratio_text = f"{atk_str}:{def_str}" if def_str > 0 else "auto"
+            label = self.font.render(ratio_text, True, arrow_color)
+
+            # Position label near defender
+            label_x = int(def_cx) + 16
+            label_y = int(def_cy) - 20
+            bg_rect = pygame.Rect(label_x - 2, label_y - 1, label.get_width() + 4, label.get_height() + 2)
+            pygame.draw.rect(self.screen, (30, 30, 30), bg_rect)
+            self.screen.blit(label, (label_x, label_y))
+
+            # If selected, draw border indicator
+            if is_selected:
+                for dh in defender_hexes:
+                    draw_highlight(self.screen, dh, (255, 255, 100, 60), self.camera_offset)
+
+    def _draw_resolution_overlay(self) -> None:
+        """Draw battles during resolution sub-phase with resolved/unresolved indicators."""
+        state = self.engine.state
+        battles = state.metadata.get("battles", [])
+
+        for battle in battles:
+            attacker_ids = battle.get("attacker_ids", ())
+            defender_hexes = battle.get("defender_hexes", ())
+            defender_ids = battle.get("defender_ids", ())
+            resolved = battle.get("resolved", False)
+            battle_id = battle.get("id")
+
+            arrow_color = BATTLE_RESOLVED_COLOR if resolved else BATTLE_UNRESOLVED_COLOR
+
+            if not defender_hexes:
+                continue
+            def_px_sum, def_py_sum = 0.0, 0.0
+            for dh in defender_hexes:
+                dpx, dpy = hex_to_pixel(dh, HEX_SIZE)
+                def_px_sum += dpx + self.camera_offset[0]
+                def_py_sum += dpy + self.camera_offset[1]
+            def_cx = def_px_sum / len(defender_hexes)
+            def_cy = def_py_sum / len(defender_hexes)
+
+            # Draw arrows
+            for uid in attacker_ids:
+                unit = state.get_unit(uid)
+                if not unit:
+                    continue
+                apx, apy = hex_to_pixel(unit.position, HEX_SIZE)
+                ax = apx + self.camera_offset[0]
+                ay = apy + self.camera_offset[1]
+                draw_arrow(self.screen, (ax, ay), (def_cx, def_cy), color=arrow_color, width=2)
+
+            # Label: ratio + result if resolved
+            atk_str = sum(
+                state.get_unit(uid).stats.get("strength", 1)
+                for uid in attacker_ids if state.get_unit(uid)
+            )
+            def_str = sum(
+                state.get_unit(uid).stats.get("strength", 1)
+                for uid in defender_ids if state.get_unit(uid)
+            )
+            ratio_text = f"{atk_str}:{def_str}" if def_str > 0 else "auto"
+            if resolved:
+                dice = battle.get("dice_roll", (0, 0))
+                result = battle.get("result", "?")
+                label_text = f"#{battle_id} {ratio_text} [{dice[0]}+{dice[1]}={sum(dice)}] {result}"
+            else:
+                label_text = f"#{battle_id} {ratio_text} [click to resolve]"
+            label = self.font_small.render(label_text, True, arrow_color)
+
+            label_x = int(def_cx) + 16
+            label_y = int(def_cy) - 20
+            bg_rect = pygame.Rect(label_x - 2, label_y - 1, label.get_width() + 4, label.get_height() + 2)
+            pygame.draw.rect(self.screen, (30, 30, 30), bg_rect)
+            self.screen.blit(label, (label_x, label_y))
+
+            # Highlight unresolved defender hexes
+            if not resolved:
+                for dh in defender_hexes:
+                    draw_highlight(self.screen, dh, (255, 200, 50, 60), self.camera_offset)
+
     def _draw_ui(self) -> None:
         ui_rect = pygame.Rect(0, SCREEN_H - UI_HEIGHT, SCREEN_W, UI_HEIGHT)
         pygame.draw.rect(self.screen, UI_BG, ui_rect)
@@ -405,7 +832,29 @@ class PygameClient:
         info_surf = self.font_big.render(info, True, TEXT_COLOR)
         self.screen.blit(info_surf, (15, SCREEN_H - UI_HEIGHT + 10))
 
-        controls = "Click: select/move/attack  |  F: entrench  |  E: end phase  |  U: undo  |  RMB: pan  |  Q: quit"
+        if self._in_declaration_mode():
+            n_battles = len(state.metadata.get("battles", []))
+            complete = state.metadata.get("declaration_complete", False)
+            status = "READY" if complete else "INCOMPLETE"
+            if self.selected_battle_id is not None:
+                controls = (
+                    f"Battle #{self.selected_battle_id} selected  |  D: cancel attack  "
+                    f"|  ESC: deselect  |  Battles: {n_battles}  [{status}]"
+                )
+            else:
+                controls = (
+                    f"Shift+Click: multi-select attackers  |  Click enemy: declare  "
+                    f"|  Click battle: select  |  D: cancel  |  E: end  |  Battles: {n_battles}  [{status}]"
+                )
+        elif self._in_resolution_mode():
+            battles = state.metadata.get("battles", [])
+            unresolved = sum(1 for b in battles if not b.get("resolved"))
+            controls = (
+                f"RESOLUTION  |  Click battle to resolve  |  "
+                f"{unresolved}/{len(battles)} remaining  |  E: end phase"
+            )
+        else:
+            controls = "Click: select/move/attack  |  F: entrench  |  E: end phase  |  U: undo  |  RMB: pan  |  Q: quit"
         ctrl_surf = self.font.render(controls, True, (150, 150, 150))
         self.screen.blit(ctrl_surf, (15, SCREEN_H - UI_HEIGHT + 35))
 
@@ -414,12 +863,25 @@ class PygameClient:
             log_surf = self.font.render(last, True, (180, 180, 100))
             self.screen.blit(log_surf, (15, SCREEN_H - UI_HEIGHT + 55))
 
+        # End Phase button — grayed when obligations unmet in declaration mode
         btn_x = SCREEN_W - 150
         btn_y = SCREEN_H - UI_HEIGHT + 20
         btn_rect = pygame.Rect(btn_x, btn_y, 130, 40)
-        pygame.draw.rect(self.screen, (80, 120, 80), btn_rect)
-        pygame.draw.rect(self.screen, (150, 200, 150), btn_rect, 2)
-        btn_text = self.font_big.render("End Phase", True, TEXT_COLOR)
+        can_end = True
+        if self._in_declaration_mode() and not state.metadata.get("declaration_complete", False):
+            can_end = False
+        if self._in_resolution_mode():
+            unresolved = [b for b in state.metadata.get("battles", []) if not b.get("resolved")]
+            if unresolved:
+                can_end = False
+        if can_end:
+            pygame.draw.rect(self.screen, (80, 120, 80), btn_rect)
+            pygame.draw.rect(self.screen, (150, 200, 150), btn_rect, 2)
+            btn_text = self.font_big.render("End Phase", True, TEXT_COLOR)
+        else:
+            pygame.draw.rect(self.screen, (60, 60, 60), btn_rect)
+            pygame.draw.rect(self.screen, (100, 100, 100), btn_rect, 2)
+            btn_text = self.font_big.render("End Phase", True, (100, 100, 100))
         self.screen.blit(btn_text, (btn_x + 15, btn_y + 10))
 
         if self.can_entrench:
