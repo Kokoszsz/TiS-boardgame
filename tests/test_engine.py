@@ -3,10 +3,10 @@
 import pytest
 
 from hexwar.core.actions import (
-    AttackAction, DeclareAttackAction, EndPhaseAction, MoveAction, UndeclareAttackAction,
+    DeclareAttackAction, EndPhaseAction, MoveAction, UndeclareAttackAction,
 )
 from hexwar.core.events import (
-    AttackDeclared, AttackUndeclared, CombatResolved, PhaseChanged, TurnChanged, UnitDestroyed, UnitMoved,
+    AttackDeclared, AttackUndeclared, PhaseChanged, TurnChanged, UnitMoved,
 )
 from hexwar.core.hex import HexCoord
 from hexwar.systems.test_system import PLAYER_A, PLAYER_B
@@ -85,8 +85,7 @@ class TestMovement:
 
 
 class TestCombat:
-    def test_stronger_attacker_destroys_defender(self):
-        """Declaration creates a battle — resolution not implemented yet, test declaration event."""
+    def test_declare_attack_strong_attacker(self):
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=5),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=3),
@@ -104,8 +103,7 @@ class TestCombat:
         assert declared_event.defender_ids == ("b1",)
         assert declared_event.attack_ratio == "5:3"
 
-    def test_stronger_defender_destroys_attacker(self):
-        """Declaration with weaker attacker still valid."""
+    def test_declare_attack_weak_attacker(self):
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=2),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=5),
@@ -120,8 +118,7 @@ class TestCombat:
         declared_event = next(e for e in events if isinstance(e, AttackDeclared))
         assert declared_event.attack_ratio == "2:5"
 
-    def test_equal_strength_tie(self):
-        """Declaration with equal strength."""
+    def test_declare_attack_equal_strength(self):
         engine = make_engine(units=[
             make_unit("a1", player=PLAYER_A, q=1, r=1, strength=3),
             make_unit("b1", player=PLAYER_B, q=2, r=1, strength=3),

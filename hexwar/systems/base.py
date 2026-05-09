@@ -16,6 +16,7 @@ class PhaseDef:
     id: str
     name: str
     player: Player
+    phase_type: str = ""
     allowed_actions: list[type] = field(default_factory=list)
     auto_advance: bool = False
 

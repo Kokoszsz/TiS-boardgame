@@ -2,7 +2,7 @@
 
 ZOC rules:
 - Only combat units (infantry, tank) project ZOC, not artillery/HQ
-- ZOC = 6 hexes adjacent to enemy combat unit
+- ZOC = unit's own hex + 6 adjacent hexes
 - Entering enemy ZOC costs all remaining MP (unit stops)
 - Can't move within the SAME enemy unit's ZOC (ZOC-A to ZOC-A blocked)
 - CAN move from ZOC of unit A to ZOC of unit B (different sources)
@@ -48,19 +48,6 @@ class TestZOCStopsMovement:
 
 
 class TestZOCBlocksMovement:
-    def test_cannot_move_zoc_to_zoc(self):
-        """Can't move directly from one enemy ZOC hex to another."""
-        engine = make_engine(units=[
-            make_unit("a1", player=PLAYER_A, q=2, r=1, movement=3),
-            make_unit("b1", player=PLAYER_B, q=3, r=2, movement=2),
-        ])
-        # a1 at (2,1) is adjacent to b1 at (3,2)? Let's check: neighbors of (3,2) include (2,2), (3,1), (4,2), (3,3), (2,3), (4,1)
-        # (2,1) is NOT adjacent to (3,2). Let me fix positions.
-        # Neighbors of (3,2): direction offsets from (3,2):
-        # (+1,0)=(4,2), (+1,-1)=(4,1), (0,-1)=(3,1), (-1,0)=(2,2), (-1,+1)=(2,3), (0,+1)=(3,3)
-        # So ZOC hexes of b1 at (3,2): (4,2), (4,1), (3,1), (2,2), (2,3), (3,3)
-        pass
-
     def test_cannot_move_directly_between_zoc_hexes(self):
         """Unit in ZOC can reach another ZOC hex only via non-ZOC path, not directly.
         Here all paths to target go through ZOC, so it's blocked."""
@@ -123,6 +110,30 @@ class TestZOCUnitTypes:
         do_actions(engine, move_to_zoc)
         move_further = MoveAction(player=PLAYER_A, unit_id="a1", target=HexCoord(2, 1))
         assert_action_illegal(engine, move_further)
+
+
+class TestZOCIncludesOwnHex:
+    def test_enemy_hex_is_in_zoc(self):
+        """Enemy unit's own hex is part of its ZOC."""
+        engine = make_engine(units=[
+            make_unit("a1", player=PLAYER_A, q=1, r=2, movement=2),
+            make_unit("b1", player=PLAYER_B, q=3, r=2, type_id="infantry"),
+        ])
+        from hexwar.systems.test_system import TestSystem
+        system: TestSystem = engine.system
+        zoc_map = system.enemy_zoc_map(engine.state, PLAYER_A)
+        assert HexCoord(3, 2) in zoc_map
+        assert "b1" in zoc_map[HexCoord(3, 2)]
+
+    def test_own_hex_zoc_blocks_zoc_to_zoc(self):
+        """Moving from adjacent ZOC hex onto enemy hex is ZOC-to-ZOC (same source), blocked by enemy presence anyway."""
+        engine = make_engine(units=[
+            make_unit("a1", player=PLAYER_A, q=2, r=2, movement=3),
+            make_unit("b1", player=PLAYER_B, q=3, r=2, type_id="infantry"),
+        ])
+        # (2,2) is in ZOC of b1, (3,2) is b1's hex also in ZOC — can't move there (enemy blocks)
+        move_onto = MoveAction(player=PLAYER_A, unit_id="a1", target=HexCoord(3, 2))
+        assert_action_illegal(engine, move_onto)
 
 
 class TestZOCEdgeCases:

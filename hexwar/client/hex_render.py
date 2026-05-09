@@ -4,7 +4,7 @@ import math
 
 import pygame
 
-from hexwar.core.hex import HexCoord
+from hexwar.core.hex import HexCoord, _hex_round
 from hexwar.core.map import TerrainLayer, TerrainType
 
 
@@ -110,21 +110,6 @@ def draw_terrain_labels(
     text_shadow = font.render(label, True, (0, 0, 0))
     surface.blit(text_shadow, (sx - text.get_width() // 2 + 1, sy - size * 0.55 + 1))
     surface.blit(text, (sx - text.get_width() // 2, sy - size * 0.55))
-
-
-def _hex_round(fq: float, fr: float) -> HexCoord:
-    fs = -fq - fr
-    q = round(fq)
-    r = round(fr)
-    s = round(fs)
-    q_diff = abs(q - fq)
-    r_diff = abs(r - fr)
-    s_diff = abs(s - fs)
-    if q_diff > r_diff and q_diff > s_diff:
-        q = -r - s
-    elif r_diff > s_diff:
-        r = -q - s
-    return HexCoord(q, r)
 
 
 def draw_arrow(

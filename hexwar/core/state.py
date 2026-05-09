@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,18 +47,7 @@ class GameState:
             new_by_hex.pop(old_pos, None)
         new_by_hex[new_pos] = new_by_hex.get(new_pos, ()) + (unit_id,)
 
-        return GameState(
-            scenario_id=self.scenario_id,
-            scenario_name=self.scenario_name,
-            system_id=self.system_id,
-            hex_map=self.hex_map,
-            units=new_units,
-            units_by_hex=new_by_hex,
-            turn=self.turn,
-            phase_index=self.phase_index,
-            active_player=self.active_player,
-            metadata=self.metadata,
-        )
+        return dataclasses.replace(self, units=new_units, units_by_hex=new_by_hex)
 
     def with_unit_removed(self, unit_id: UnitId) -> GameState:
         unit = self.units[unit_id]
@@ -72,78 +62,24 @@ class GameState:
         else:
             new_by_hex.pop(pos, None)
 
-        return GameState(
-            scenario_id=self.scenario_id,
-            scenario_name=self.scenario_name,
-            system_id=self.system_id,
-            hex_map=self.hex_map,
-            units=new_units,
-            units_by_hex=new_by_hex,
-            turn=self.turn,
-            phase_index=self.phase_index,
-            active_player=self.active_player,
-            metadata=self.metadata,
-        )
+        return dataclasses.replace(self, units=new_units, units_by_hex=new_by_hex)
 
     def with_phase(self, phase_index: int, active_player: Player) -> GameState:
-        return GameState(
-            scenario_id=self.scenario_id,
-            scenario_name=self.scenario_name,
-            system_id=self.system_id,
-            hex_map=self.hex_map,
-            units=self.units,
-            units_by_hex=self.units_by_hex,
-            turn=self.turn,
-            phase_index=phase_index,
-            active_player=active_player,
-            metadata=self.metadata,
-        )
+        return dataclasses.replace(self, phase_index=phase_index, active_player=active_player)
 
     def with_turn(self, turn: int) -> GameState:
-        return GameState(
-            scenario_id=self.scenario_id,
-            scenario_name=self.scenario_name,
-            system_id=self.system_id,
-            hex_map=self.hex_map,
-            units=self.units,
-            units_by_hex=self.units_by_hex,
-            turn=turn,
-            phase_index=self.phase_index,
-            active_player=self.active_player,
-            metadata=self.metadata,
-        )
+        return dataclasses.replace(self, turn=turn)
 
     def with_metadata(self, key: str, value: Any) -> GameState:
-        new_metadata = {**self.metadata, key: value}
-        return GameState(
-            scenario_id=self.scenario_id,
-            scenario_name=self.scenario_name,
-            system_id=self.system_id,
-            hex_map=self.hex_map,
-            units=self.units,
-            units_by_hex=self.units_by_hex,
-            turn=self.turn,
-            phase_index=self.phase_index,
-            active_player=self.active_player,
-            metadata=new_metadata,
-        )
+        return dataclasses.replace(self, metadata={**self.metadata, key: value})
 
-    def with_unit_stats(self, unit_id: UnitId, **updates) -> GameState:
-        unit = self.units[unit_id]
-        new_unit = unit.with_stats(**updates)
-        new_units = {**self.units, unit_id: new_unit}
-        return GameState(
-            scenario_id=self.scenario_id,
-            scenario_name=self.scenario_name,
-            system_id=self.system_id,
-            hex_map=self.hex_map,
-            units=new_units,
-            units_by_hex=self.units_by_hex,
-            turn=self.turn,
-            phase_index=self.phase_index,
-            active_player=self.active_player,
-            metadata=self.metadata,
-        )
+    def with_metadata_dropped(self, *keys: str) -> GameState:
+        new_metadata = {k: v for k, v in self.metadata.items() if k not in keys}
+        return dataclasses.replace(self, metadata=new_metadata)
+
+    def with_unit_stats(self, unit_id: UnitId, **updates: Any) -> GameState:
+        new_unit = self.units[unit_id].with_stats(**updates)
+        return dataclasses.replace(self, units={**self.units, unit_id: new_unit})
 
 
 def build_initial_state(

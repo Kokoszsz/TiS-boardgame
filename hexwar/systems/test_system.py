@@ -3,12 +3,12 @@ from __future__ import annotations
 from itertools import combinations
 
 from hexwar.core.actions import (
-    Action, AttackAction, DeclareAttackAction, EndPhaseAction,
+    Action, DeclareAttackAction, EndPhaseAction,
     EntrenchAction, MoveAction, ResolveBattleAction, UndeclareAttackAction,
 )
 from hexwar.core.events import (
-    AttackDeclared, AttackUndeclared, BattleResolved, CombatResolved, Event,
-    UnitDestroyed, UnitEntrenched, UnitMoved,
+    AttackDeclared, AttackUndeclared, BattleResolved, Event,
+    UnitEntrenched, UnitMoved,
 )
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import TerrainType
@@ -21,6 +21,9 @@ from hexwar.systems.base import PhaseDef, System
 PLAYER_A = "player_a"
 PLAYER_B = "player_b"
 
+SUB_PHASE_DECLARATION = "declaration"
+SUB_PHASE_RESOLUTION = "resolution"
+
 
 class TestSystem(System):
     name = "TestSystem"
@@ -29,12 +32,16 @@ class TestSystem(System):
     def __init__(self):
         self.phases = [
             PhaseDef(id="move_a", name="Player A Movement", player=PLAYER_A,
+                     phase_type="movement",
                      allowed_actions=[MoveAction, EntrenchAction, EndPhaseAction]),
             PhaseDef(id="combat_a", name="Player A Combat", player=PLAYER_A,
+                     phase_type="combat",
                      allowed_actions=[DeclareAttackAction, UndeclareAttackAction, EndPhaseAction]),
             PhaseDef(id="move_b", name="Player B Movement", player=PLAYER_B,
+                     phase_type="movement",
                      allowed_actions=[MoveAction, EntrenchAction, EndPhaseAction]),
             PhaseDef(id="combat_b", name="Player B Combat", player=PLAYER_B,
+                     phase_type="combat",
                      allowed_actions=[DeclareAttackAction, UndeclareAttackAction, EndPhaseAction]),
         ]
         self.unit_types = {
@@ -51,7 +58,7 @@ class TestSystem(System):
     STACK_LIMIT = 6
     ZOC_UNIT_TYPES = {"infantry", "tank"}
 
-    TERRAIN_COSTS: dict[TerrainType, float] = {
+    TERRAIN_COSTS: dict[TerrainType, float | None] = {
         TerrainType.PLAIN: 1,
         TerrainType.FOREST: 2,
         TerrainType.HILL: 2,
@@ -78,13 +85,14 @@ class TestSystem(System):
     def _is_blocked(self, state: GameState, coord: HexCoord) -> bool:
         return not state.hex_map.is_passable(coord)
 
-    def _enemy_zoc_map(self, state: GameState, player: Player) -> dict[HexCoord, set[str]]:
+    def enemy_zoc_map(self, state: GameState, player: Player) -> dict[HexCoord, set[str]]:
         zoc: dict[HexCoord, set[str]] = {}
         for unit in state.units.values():
             if unit.player == player:
                 continue
             if unit.type_id not in self.ZOC_UNIT_TYPES:
                 continue
+            zoc.setdefault(unit.position, set()).add(unit.id)
             for nb in unit.position.neighbors():
                 zoc.setdefault(nb, set()).add(unit.id)
         return zoc
@@ -110,7 +118,7 @@ class TestSystem(System):
 
         if MoveAction in phase.allowed_actions:
             remaining_mp = state.metadata.get("remaining_mp", {})
-            zoc_map = self._enemy_zoc_map(state, player)
+            zoc_map = self.enemy_zoc_map(state, player)
             for unit in state.units_of(player):
                 base_mp = unit.stats.get("movement", 1)
                 move_range = remaining_mp.get(unit.id, base_mp)
@@ -156,28 +164,19 @@ class TestSystem(System):
 
         if DeclareAttackAction in phase.allowed_actions:
             combat_sub_phase = state.metadata.get("combat_sub_phase")
-            if combat_sub_phase == "declaration":
+            if combat_sub_phase == SUB_PHASE_DECLARATION:
                 actions.extend(self._legal_declare_actions(state, player))
                 actions.extend(self._legal_undeclare_actions(state, player))
-            elif combat_sub_phase == "resolution":
+            elif combat_sub_phase == SUB_PHASE_RESOLUTION:
                 actions.extend(self._legal_resolve_actions(state, player))
-
-        if AttackAction in phase.allowed_actions:
-            for unit in state.units_of(player):
-                for nb in unit.position.neighbors():
-                    enemies = [u for u in state.units_at(nb) if u.player != player]
-                    for enemy in enemies:
-                        actions.append(
-                            AttackAction(player=player, attacker_id=unit.id, defender_id=enemy.id)
-                        )
 
         # EndPhaseAction: only if declaration is complete (or no combat phase)
         if DeclareAttackAction in phase.allowed_actions:
             combat_sub_phase = state.metadata.get("combat_sub_phase")
-            if combat_sub_phase == "declaration":
+            if combat_sub_phase == SUB_PHASE_DECLARATION:
                 if state.metadata.get("declaration_complete", False):
                     actions.append(EndPhaseAction(player=player))
-            elif combat_sub_phase == "resolution":
+            elif combat_sub_phase == SUB_PHASE_RESOLUTION:
                 # Can end phase only when all battles resolved
                 unresolved = [b for b in state.metadata.get("battles", [])
                               if not b.get("resolved")]
@@ -195,8 +194,6 @@ class TestSystem(System):
             return self._apply_move(state, action)
         if isinstance(action, EntrenchAction):
             return self._apply_entrench(state, action)
-        if isinstance(action, AttackAction):
-            return self._apply_attack(state, action)
         if isinstance(action, DeclareAttackAction):
             return self._apply_declare_attack(state, action)
         if isinstance(action, UndeclareAttackAction):
@@ -235,7 +232,7 @@ class TestSystem(System):
         """Block phase advance during declaration sub-phase when there are
         battles to resolve. Skip resolution if no battles were declared."""
         combat_sub_phase = state.metadata.get("combat_sub_phase")
-        if combat_sub_phase == "declaration":
+        if combat_sub_phase == SUB_PHASE_DECLARATION:
             battles = state.metadata.get("battles", [])
             if battles:
                 return False  # Must go through resolution
@@ -247,7 +244,7 @@ class TestSystem(System):
 
     def _init_combat_declaration(self, state: GameState, player: Player) -> GameState:
         obligated_attackers, obligated_enemies = self._compute_obligations(state, player)
-        state = state.with_metadata("combat_sub_phase", "declaration")
+        state = state.with_metadata("combat_sub_phase", SUB_PHASE_DECLARATION)
         state = state.with_metadata("battles", [])
         state = state.with_metadata("next_battle_id", 1)
         state = state.with_metadata("committed_attackers", set())
@@ -258,19 +255,11 @@ class TestSystem(System):
         return state
 
     def _cleanup_combat_metadata(self, state: GameState) -> GameState:
-        for key in ("combat_sub_phase", "battles", "next_battle_id",
-                    "committed_attackers", "committed_defenders",
-                    "obligated_attackers", "obligated_enemies", "declaration_complete"):
-            md = dict(state.metadata)
-            md.pop(key, None)
-            state = GameState(
-                scenario_id=state.scenario_id, scenario_name=state.scenario_name,
-                system_id=state.system_id, hex_map=state.hex_map, units=state.units,
-                units_by_hex=state.units_by_hex,
-                active_player=state.active_player, turn=state.turn,
-                phase_index=state.phase_index, metadata=md,
-            )
-        return state
+        return state.with_metadata_dropped(
+            "combat_sub_phase", "battles", "next_battle_id",
+            "committed_attackers", "committed_defenders",
+            "obligated_attackers", "obligated_enemies", "declaration_complete",
+        )
 
     def _compute_obligations(
         self, state: GameState, player: Player
@@ -359,7 +348,7 @@ class TestSystem(System):
         current_mp = remaining_mp.get(unit.id, base_mp)
         already_moved = unit.id in remaining_mp
 
-        zoc_map = self._enemy_zoc_map(state, player)
+        zoc_map = self.enemy_zoc_map(state, player)
         cost_fn = lambda f, t: self._movement_cost_with_zoc(state, f, t, player, zoc_map)
         blocked_fn = lambda c: self._is_blocked(state, c)
         reachable = reachable_hexes(
@@ -396,41 +385,6 @@ class TestSystem(System):
         remaining_mp = {**new_state.metadata.get("remaining_mp", {}), action.unit_id: 0}
         new_state = new_state.with_metadata("remaining_mp", remaining_mp)
         return new_state, [UnitEntrenched(unit_id=action.unit_id, at_hex=unit.position)]
-
-    def _apply_attack(
-        self, state: GameState, action: AttackAction
-    ) -> tuple[GameState, list[Event]]:
-        attacker = state.get_unit(action.attacker_id)
-        defender = state.get_unit(action.defender_id)
-        if attacker is None or defender is None:
-            return state, []
-
-        atk_str = attacker.stats.get("strength", 1)
-        def_str = defender.stats.get("strength", 1)
-        events: list[Event] = []
-
-        if atk_str > def_str:
-            result = "attacker_wins"
-            new_state = state.with_unit_removed(action.defender_id)
-            events.append(CombatResolved(
-                attacker_id=action.attacker_id, defender_id=action.defender_id, result=result
-            ))
-            events.append(UnitDestroyed(unit_id=action.defender_id, at_hex=defender.position))
-        elif def_str > atk_str:
-            result = "defender_wins"
-            new_state = state.with_unit_removed(action.attacker_id)
-            events.append(CombatResolved(
-                attacker_id=action.attacker_id, defender_id=action.defender_id, result=result
-            ))
-            events.append(UnitDestroyed(unit_id=action.attacker_id, at_hex=attacker.position))
-        else:
-            result = "tie"
-            new_state = state
-            events.append(CombatResolved(
-                attacker_id=action.attacker_id, defender_id=action.defender_id, result=result
-            ))
-
-        return new_state, events
 
     # ------------------------------------------------------------------
     # Declaration apply methods
@@ -537,15 +491,10 @@ class TestSystem(System):
     # ------------------------------------------------------------------
 
     def _legal_declare_actions(self, state: GameState, player: Player) -> list[DeclareAttackAction]:
-        """Generate all valid DeclareAttackAction combinations.
-
-        For each uncommitted friendly unit adjacent to enemies, enumerate
-        valid attacker subsets × defender hex subsets respecting topology.
-        """
+        """Generate all valid DeclareAttackAction combinations."""
         committed_attackers = state.metadata.get("committed_attackers", set())
         committed_defenders = state.metadata.get("committed_defenders", set())
 
-        # Find available attackers (friendly, uncommitted, adjacent to enemy)
         available_attackers: list[str] = []
         attacker_to_enemy_hexes: dict[str, set[HexCoord]] = {}
 
@@ -555,7 +504,6 @@ class TestSystem(System):
             enemy_hexes: set[HexCoord] = set()
             for nb in unit.position.neighbors():
                 enemies = [u for u in state.units_at(nb) if u.player != player]
-                # Filter out already committed defenders
                 uncommitted_enemies = [u for u in enemies if u.id not in committed_defenders]
                 if uncommitted_enemies:
                     enemy_hexes.add(nb)
@@ -569,23 +517,9 @@ class TestSystem(System):
         actions: list[DeclareAttackAction] = []
         seen: set[tuple[tuple[str, ...], tuple[HexCoord, ...]]] = set()
 
-        # Generate combinations: for each subset of attackers (1 to all available),
-        # find common reachable defender hexes, then for each subset of those hexes
-        # validate topology.
-        max_attackers = min(len(available_attackers), 6)  # practical limit
+        max_attackers = min(len(available_attackers), 6)
         for size in range(1, max_attackers + 1):
             for attacker_combo in combinations(available_attackers, size):
-                # Common enemy hexes reachable by ALL attackers in combo
-                common_hexes = attacker_to_enemy_hexes[attacker_combo[0]].copy()
-                for uid in attacker_combo[1:]:
-                    common_hexes &= attacker_to_enemy_hexes[uid]
-
-                # Also include individual reachable hexes for fan-in
-                all_reachable_hexes: set[HexCoord] = set()
-                for uid in attacker_combo:
-                    all_reachable_hexes |= attacker_to_enemy_hexes[uid]
-
-                # Check topology: if attackers on multiple hexes, only 1 defender hex allowed (fan-in)
                 attacker_positions = set()
                 for uid in attacker_combo:
                     unit = state.get_unit(uid)
@@ -593,45 +527,75 @@ class TestSystem(System):
                         attacker_positions.add(unit.position)
 
                 if len(attacker_positions) > 1:
-                    # Fan-in: only single defender hex allowed, must be reachable by all
-                    for dh in common_hexes:
-                        # Check defenders on this hex not committed
-                        defenders = self._get_defender_ids_for_hexes(state, (dh,), player)
-                        if not defenders or any(d in committed_defenders for d in defenders):
-                            continue
-                        key = (tuple(sorted(attacker_combo)), (dh,))
-                        if key not in seen:
-                            seen.add(key)
-                            actions.append(DeclareAttackAction(
-                                player=player,
-                                attacker_ids=tuple(sorted(attacker_combo)),
-                                defender_hexes=(dh,),
-                            ))
+                    self._fan_in_actions(
+                        state, player, attacker_combo, attacker_to_enemy_hexes,
+                        committed_defenders, seen, actions,
+                    )
                 else:
-                    # Single attacker hex: fan-out allowed (multiple defender hexes)
-                    for dh_size in range(1, len(all_reachable_hexes) + 1):
-                        for dh_combo in combinations(sorted(all_reachable_hexes), dh_size):
-                            # Check each defender hex is adjacent to at least one attacker
-                            valid = True
-                            for dh in dh_combo:
-                                if not any(dh in attacker_to_enemy_hexes.get(uid, set()) for uid in attacker_combo):
-                                    valid = False
-                                    break
-                            if not valid:
-                                continue
-                            defenders = self._get_defender_ids_for_hexes(state, dh_combo, player)
-                            if not defenders or any(d in committed_defenders for d in defenders):
-                                continue
-                            key = (tuple(sorted(attacker_combo)), tuple(sorted(dh_combo)))
-                            if key not in seen:
-                                seen.add(key)
-                                actions.append(DeclareAttackAction(
-                                    player=player,
-                                    attacker_ids=tuple(sorted(attacker_combo)),
-                                    defender_hexes=tuple(sorted(dh_combo)),
-                                ))
+                    self._fan_out_actions(
+                        state, player, attacker_combo, attacker_to_enemy_hexes,
+                        committed_defenders, seen, actions,
+                    )
 
         return actions
+
+    def _fan_in_actions(
+        self, state: GameState, player: Player,
+        attacker_combo: tuple[str, ...],
+        attacker_to_enemy_hexes: dict[str, set[HexCoord]],
+        committed_defenders: set[str],
+        seen: set[tuple[tuple[str, ...], tuple[HexCoord, ...]]],
+        out: list[DeclareAttackAction],
+    ) -> None:
+        """Multiple attacker hexes → single defender hex."""
+        common_hexes = attacker_to_enemy_hexes[attacker_combo[0]].copy()
+        for uid in attacker_combo[1:]:
+            common_hexes &= attacker_to_enemy_hexes[uid]
+
+        for dh in common_hexes:
+            defenders = self._get_defender_ids_for_hexes(state, (dh,), player)
+            if not defenders or any(d in committed_defenders for d in defenders):
+                continue
+            key = (tuple(sorted(attacker_combo)), (dh,))
+            if key not in seen:
+                seen.add(key)
+                out.append(DeclareAttackAction(
+                    player=player,
+                    attacker_ids=tuple(sorted(attacker_combo)),
+                    defender_hexes=(dh,),
+                ))
+
+    def _fan_out_actions(
+        self, state: GameState, player: Player,
+        attacker_combo: tuple[str, ...],
+        attacker_to_enemy_hexes: dict[str, set[HexCoord]],
+        committed_defenders: set[str],
+        seen: set[tuple[tuple[str, ...], tuple[HexCoord, ...]]],
+        out: list[DeclareAttackAction],
+    ) -> None:
+        """Single attacker hex → one or more defender hexes."""
+        all_reachable: set[HexCoord] = set()
+        for uid in attacker_combo:
+            all_reachable |= attacker_to_enemy_hexes[uid]
+
+        for dh_size in range(1, len(all_reachable) + 1):
+            for dh_combo in combinations(sorted(all_reachable), dh_size):
+                if not all(
+                    any(dh in attacker_to_enemy_hexes.get(uid, set()) for uid in attacker_combo)
+                    for dh in dh_combo
+                ):
+                    continue
+                defenders = self._get_defender_ids_for_hexes(state, dh_combo, player)
+                if not defenders or any(d in committed_defenders for d in defenders):
+                    continue
+                key = (tuple(sorted(attacker_combo)), tuple(sorted(dh_combo)))
+                if key not in seen:
+                    seen.add(key)
+                    out.append(DeclareAttackAction(
+                        player=player,
+                        attacker_ids=tuple(sorted(attacker_combo)),
+                        defender_hexes=tuple(sorted(dh_combo)),
+                    ))
 
     def _legal_undeclare_actions(self, state: GameState, player: Player) -> list[UndeclareAttackAction]:
         """Generate UndeclareAttackAction for each existing battle."""
@@ -648,8 +612,8 @@ class TestSystem(System):
         """Handle EndPhaseAction routed by engine when should_advance_phase=False.
         Transitions from declaration to resolution sub-phase."""
         combat_sub_phase = state.metadata.get("combat_sub_phase")
-        if combat_sub_phase == "declaration":
-            state = state.with_metadata("combat_sub_phase", "resolution")
+        if combat_sub_phase == SUB_PHASE_DECLARATION:
+            state = state.with_metadata("combat_sub_phase", SUB_PHASE_RESOLUTION)
         return state, []
 
     def _legal_resolve_actions(self, state: GameState, player: Player) -> list[ResolveBattleAction]:

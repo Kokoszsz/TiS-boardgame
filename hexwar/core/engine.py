@@ -85,7 +85,6 @@ class Engine:
 
         winner = self._system.victory(self._state)
         if winner is not None:
-            self._state = self._state
             all_events.append(
                 PhaseChanged(phase_id="game_over", phase_name="Game Over", active_player=winner)
             )
