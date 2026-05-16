@@ -34,19 +34,25 @@ Engine (generic)  →  System (rule set plugin)  →  Scenario (battle data)
 
 ```
 hexwar/
-  core/       # hex.py, map.py, unit.py, state.py, actions.py, events.py, rng.py, engine.py
-  systems/    # base.py (ABC), test_system.py, wb48/
-  scenarios/  # *.yaml
-  client/     # pygame_client/
+  core/       # hex.py, map.py, unit.py, state.py, actions.py, events.py, rng.py, engine.py, battle.py
+  systems/    # base.py (ABC), wb48/ (system.py + mixins)
+  scenarios/  # *.yaml (planned)
+  client/     # pygame_client.py
 ```
 
 ## Implementation Order
 
-1. Engine core (`hexwar/core/`) — no rules needed
-2. System ABC + TestSystem — dummy system proving engine works
-3. Pygame hot-seat client
-4. WB-48 system plugin (needs completed `wb48_rules.md`)
-5. First scenario — digitize one WB-48 battle
+1. Engine core (`hexwar/core/`) ✓
+2. WB-48 system rules (`hexwar/systems/wb48/`) — building all mechanics first
+3. Pygame client (extends per WB-48 sub-mechanic)
+4. Scenario YAML + loader
+5. Save/load
+6. First playable scenario
+7. Main menu
+8. Map + scenario editor
+9. AI player
+10. Multiplayer (FastAPI + WebSocket)
+11. Polish (rules reference, combat preview, UI/graphics)
 
 ## Key Files
 
