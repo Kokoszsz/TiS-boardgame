@@ -20,11 +20,13 @@ class HistoryEntry:
 
 class Engine:
     def __init__(self, state: GameState, system: System, rng: GameRNG):
-        self._state = state
         self._system = system
         self._rng = rng
         self._history: list[HistoryEntry] = []
-        self._initial_state = state
+        initial_phase = system.phases[state.phase_index]
+        enter_state, _ = system.on_phase_enter(state, initial_phase)
+        self._state = enter_state
+        self._initial_state = enter_state
 
     @property
     def state(self) -> GameState:

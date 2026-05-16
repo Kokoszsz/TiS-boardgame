@@ -175,3 +175,31 @@ class TestUndo:
         engine = make_engine(units=[make_unit("u1", player=PLAYER_A, q=1, r=1)])
         result = engine.undo()
         assert result is None
+
+
+class TestInitialPhaseSetup:
+    """Engine must run on_phase_enter for the initial phase at construction.
+
+    Regression: without this, units start with movement_left=0 (never reset),
+    appearing exhausted with no legal moves at game start.
+    """
+
+    def test_active_player_units_have_full_mp_at_game_start(self):
+        engine = make_engine(units=[
+            make_unit("a1", player=PLAYER_A, q=1, r=1, movement=2),
+            make_unit("a2", player=PLAYER_A, q=2, r=2, movement=3),
+            make_unit("b1", player=PLAYER_B, q=5, r=5, movement=2),
+        ])
+        a1 = engine.state.get_unit("a1")
+        a2 = engine.state.get_unit("a2")
+        assert a1.movement_left == a1.movement_max == 2
+        assert a2.movement_left == a2.movement_max == 3
+
+    def test_initial_phase_active_player_has_legal_moves(self):
+        engine = make_engine(units=[
+            make_unit("a1", player=PLAYER_A, q=1, r=1, movement=2),
+            make_unit("b1", player=PLAYER_B, q=5, r=5),
+        ])
+        legal = engine.get_legal_actions()
+        moves = [a for a in legal if isinstance(a, MoveAction)]
+        assert len(moves) > 0, "Active player at game start must have legal move actions"

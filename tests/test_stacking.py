@@ -182,9 +182,10 @@ class TestMultiUnitHexSelection:
             make_unit("u2", q=2, r=2, movement=2),
         ])
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
-        remaining_mp = engine.state.metadata.get("remaining_mp", {})
-        assert remaining_mp.get("u1") == 0
-        assert "u2" not in remaining_mp  # not moved yet, full MP
+        u1 = engine.state.get_unit("u1")
+        u2 = engine.state.get_unit("u2")
+        assert u1.movement_left == 0
+        assert u2.movement_left == u2.movement_max  # not moved yet, full MP
 
     def test_both_units_can_move_separately(self):
         """Both stacked units can each make their own move in same phase."""

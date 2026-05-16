@@ -82,5 +82,11 @@ class SkipPursuitAction(Action):
 
 
 @dataclass(frozen=True, slots=True)
+class DeclareStrategicMovementAction(Action):
+    unit_id: UnitId
+
+
+
+@dataclass(frozen=True, slots=True)
 class EndPhaseAction(Action):
     pass

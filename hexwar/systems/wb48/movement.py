@@ -62,14 +62,12 @@ class MovementMixin:
 
     def _legal_move_actions(self, state: GameState, player: Player) -> list[MoveAction]:
         actions: list[MoveAction] = []
-        remaining_mp = state.metadata.get("remaining_mp", {})
         zoc_map = self.enemy_zoc_map(state, player)
         for unit in state.units_of(player):
-            base_mp = unit.stats.get("movement", 1)
-            move_range = remaining_mp.get(unit.id, base_mp)
+            move_range = unit.movement_left
             if move_range <= 0:
                 continue
-            already_moved = unit.id in remaining_mp
+            already_moved = unit.movement_left < unit.movement_max
             cost_fn = lambda f, t: self._movement_cost_with_zoc(
                 state, f, t, player, zoc_map,
             )
@@ -97,10 +95,9 @@ class MovementMixin:
 
     def _legal_entrench_actions(self, state: GameState, player: Player) -> list[EntrenchAction]:
         actions: list[EntrenchAction] = []
-        remaining_mp = state.metadata.get("remaining_mp", {})
         entrenched_hexes = state.metadata.get("entrenched", {})
         for unit in state.units_of(player):
-            if unit.id in remaining_mp:
+            if unit.movement_left < unit.movement_max:
                 continue
             if unit.position in entrenched_hexes:
                 continue
@@ -119,10 +116,8 @@ class MovementMixin:
         old_pos = unit.position
         player = unit.player
 
-        remaining_mp = state.metadata.get("remaining_mp", {})
-        base_mp = unit.stats.get("movement", 1)
-        current_mp = remaining_mp.get(unit.id, base_mp)
-        already_moved = unit.id in remaining_mp
+        current_mp = unit.movement_left
+        already_moved = unit.movement_left < unit.movement_max
 
         zoc_map = self.enemy_zoc_map(state, player)
         cost_fn = lambda f, t: self._movement_cost_with_zoc(state, f, t, player, zoc_map)
@@ -134,8 +129,8 @@ class MovementMixin:
         new_mp = reachable.get(action.target, 0)
 
         new_state = state.with_unit_moved(action.unit_id, action.target)
-        new_remaining = {**new_state.metadata.get("remaining_mp", {}), action.unit_id: new_mp}
-        new_state = new_state.with_metadata("remaining_mp", new_remaining)
+        moved_unit = new_state.get_unit(action.unit_id).with_movement_left(new_mp)
+        new_state = new_state.with_unit(moved_unit)
 
         entrenched = dict(new_state.metadata.get("entrenched", {}))
         if action.target in entrenched and entrenched[action.target] != player:
@@ -158,6 +153,5 @@ class MovementMixin:
         entrenched = dict(state.metadata.get("entrenched", {}))
         entrenched[unit.position] = unit.player
         new_state = state.with_metadata("entrenched", entrenched)
-        remaining_mp = {**new_state.metadata.get("remaining_mp", {}), action.unit_id: 0}
-        new_state = new_state.with_metadata("remaining_mp", remaining_mp)
+        new_state = new_state.with_unit(unit.with_movement_left(0))
         return new_state, [UnitEntrenched(unit_id=action.unit_id, at_hex=unit.position)]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from hexwar.core.actions import (
     Action, AssignCplLossAction, ChooseRetreatSplitAction,
-    DeclareAttackAction, EndPhaseAction,
+    DeclareAttackAction, DeclareStrategicMovementAction, EndPhaseAction,
     EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
     RetreatUnitAction, SkipPursuitAction, UndeclareAttackAction,
 )
@@ -110,6 +110,8 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
             return self._apply_move(state, action)
         if isinstance(action, EntrenchAction):
             return self._apply_entrench(state, action)
+        if isinstance(action, DeclareStrategicMovementAction):
+            return self._apply_declare_strategic_movement(state, action)
         if isinstance(action, DeclareAttackAction):
             return self._apply_declare_attack(state, action)
         if isinstance(action, UndeclareAttackAction):
@@ -142,7 +144,10 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
     def on_phase_enter(
         self, state: GameState, phase: PhaseDef
     ) -> tuple[GameState, list[Event]]:
-        new_state = state.with_metadata("remaining_mp", {})
+        new_state = state
+        if phase.id in ("move_a", "move_b"):
+            for unit in new_state.units_of(phase.player):
+                new_state = new_state.with_unit(unit.with_movement_left(unit.movement_max))
         if phase.id in ("combat_a", "combat_b"):
             new_state = self._init_combat_declaration(new_state, phase.player)
         return new_state, []

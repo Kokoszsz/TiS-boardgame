@@ -792,7 +792,6 @@ class PygameClient:
         pygame.draw.rect(self.screen, PANEL_BORDER, self.unit_picker_rect, 1)
 
         mouse_pos = pygame.mouse.get_pos()
-        remaining_mp = self.engine.state.metadata.get("remaining_mp", {})
         committed = self.engine.state.metadata.get("committed_attackers", set()) if self._in_declaration_mode() else set()
 
         for i, (unit, rect) in enumerate(zip(self.unit_picker_units, self.unit_picker_item_rects)):
@@ -804,7 +803,7 @@ class PygameClient:
             color = PLAYER_COLORS.get(unit.player, (200, 200, 200))
             pygame.draw.circle(self.screen, color, (rect.x + 14, rect.centery), 8)
 
-            mp_left = remaining_mp.get(unit.id, unit.stats.get("movement", 1))
+            mp_left = unit.movement_left
             suffix = "  [ATK]" if is_committed else ""
             info = f"{unit.name}  MP:{mp_left}{suffix}"
             text_color = (120, 120, 120) if is_committed else TEXT_COLOR
@@ -948,8 +947,7 @@ class PygameClient:
                     draw_highlight(self.screen, unit.position, HIGHLIGHT_SELECTED_ATTACKER, self.camera_offset)
 
     def _is_unit_exhausted(self, unit: Unit) -> bool:
-        remaining_mp = self.engine.state.metadata.get("remaining_mp", {})
-        return remaining_mp.get(unit.id, -1) == 0
+        return unit.movement_left == 0 and unit.movement_left < unit.movement_max
 
     def _draw_units(self) -> None:
         state = self.engine.state
@@ -1159,17 +1157,23 @@ def build_test_scenario() -> Engine:
 
     units = [
         Unit(id="inf_a1", name="1st Infantry A", type_id="infantry",
-             player=PLAYER_A, position=HexCoord(1, 2), stats={"strength": 3, "movement": 2}),
+             player=PLAYER_A, position=HexCoord(1, 2), stats={"strength": 3},
+             movement_max=2, movement_left=2),
         Unit(id="inf_a2", name="2nd Infantry A", type_id="infantry",
-             player=PLAYER_A, position=HexCoord(1, 3), stats={"strength": 4, "movement": 2}),
+             player=PLAYER_A, position=HexCoord(1, 3), stats={"strength": 4},
+             movement_max=2, movement_left=2),
         Unit(id="tank_a1", name="Tank Platoon A", type_id="tank",
-             player=PLAYER_A, position=HexCoord(0, 4), stats={"strength": 5, "movement": 3}),
+             player=PLAYER_A, position=HexCoord(0, 4), stats={"strength": 5},
+             movement_max=3, movement_left=3),
         Unit(id="inf_b1", name="1st Infantry B", type_id="infantry",
-             player=PLAYER_B, position=HexCoord(5, 3), stats={"strength": 3, "movement": 2}),
+             player=PLAYER_B, position=HexCoord(5, 3), stats={"strength": 3},
+             movement_max=2, movement_left=2),
         Unit(id="inf_b2", name="2nd Infantry B", type_id="infantry",
-             player=PLAYER_B, position=HexCoord(6, 2), stats={"strength": 4, "movement": 2}),
+             player=PLAYER_B, position=HexCoord(6, 2), stats={"strength": 4},
+             movement_max=2, movement_left=2),
         Unit(id="tank_b1", name="Tank Platoon B", type_id="tank",
-             player=PLAYER_B, position=HexCoord(6, 4), stats={"strength": 5, "movement": 3}),
+             player=PLAYER_B, position=HexCoord(6, 4), stats={"strength": 5},
+             movement_max=3, movement_left=3),
     ]
 
     system = WB48System()

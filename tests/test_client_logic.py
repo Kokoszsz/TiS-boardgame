@@ -41,9 +41,10 @@ def _make_engine(units, hex_map=None):
 
 
 def _make_unit(id, player=PLAYER_A, q=0, r=0, type_id="infantry", strength=3, movement=2, **extra):
-    stats = {"strength": strength, "movement": movement, **extra}
+    stats = {"strength": strength, **extra}
     return Unit(id=id, name=id, type_id=type_id, player=player,
-                position=HexCoord(q, r), stats=stats)
+                position=HexCoord(q, r), stats=stats,
+                movement_max=movement, movement_left=movement)
 
 
 @pytest.fixture

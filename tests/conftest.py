@@ -27,10 +27,10 @@ def make_unit(
     q: int = 0,
     r: int = 0,
     strength: int = 3,
-    movement: int = 2,
+    movement: float = 2,
     **extra_stats,
 ) -> Unit:
-    stats = {"strength": strength, "movement": movement, **extra_stats}
+    stats = {"strength": strength, **extra_stats}
     return Unit(
         id=id,
         name=id,
@@ -38,6 +38,8 @@ def make_unit(
         player=player,
         position=HexCoord(q, r),
         stats=stats,
+        movement_max=movement,
+        movement_left=movement,
     )
 
 

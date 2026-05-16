@@ -26,13 +26,17 @@ def main():
 
     units = [
         Unit(id="inf_a1", name="1st Infantry A", type_id="infantry",
-             player=PLAYER_A, position=HexCoord(1, 1), stats={"strength": 3, "movement": 2}),
+             player=PLAYER_A, position=HexCoord(1, 1), stats={"strength": 3},
+             movement_max=2, movement_left=2),
         Unit(id="tank_a1", name="Tank Platoon A", type_id="tank",
-             player=PLAYER_A, position=HexCoord(0, 2), stats={"strength": 5, "movement": 3}),
+             player=PLAYER_A, position=HexCoord(0, 2), stats={"strength": 5},
+             movement_max=3, movement_left=3),
         Unit(id="inf_b1", name="1st Infantry B", type_id="infantry",
-             player=PLAYER_B, position=HexCoord(4, 1), stats={"strength": 3, "movement": 2}),
+             player=PLAYER_B, position=HexCoord(4, 1), stats={"strength": 3},
+             movement_max=2, movement_left=2),
         Unit(id="inf_b2", name="2nd Infantry B", type_id="infantry",
-             player=PLAYER_B, position=HexCoord(4, 3), stats={"strength": 4, "movement": 2}),
+             player=PLAYER_B, position=HexCoord(4, 3), stats={"strength": 4},
+             movement_max=2, movement_left=2),
     ]
 
     state = build_initial_state(

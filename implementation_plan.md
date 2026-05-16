@@ -90,10 +90,10 @@ Implementation outline:
 - Units must be within HQ range for full effectiveness
 - Combat modifier when out-of-command
 
-### 2.11 Fortifications (sec 9.0) — ☐
-- Field Fortifications (FF) — built during movement phase
-- Permanent Fortifications (PF) — scenario-placed
-- Combat + movement modifiers
+### 2.11 Fortifications (sec 9.0) — ◐ partial
+- Field Fortifications (FF) — ✓ build via `EntrenchAction` during movement phase, token persistence (9.13–9.16). Yellow-circle UI marker.
+- Missing FF: combat column-shift (9.21 -2/-1), cumulative terrain (9.22), FF unit not forced to attack (9.23), Improved FF (9.24, red token, scenario-placed)
+- Permanent Fortifications (PF) — ☐ entirely missing. Map-painted lines, halve attacker SP through PF edge (9.41), fortresses (9.42), defender PF combat option B1-B5 → CPL retain (9.44)
 
 ### 2.12 Bridges (sec 13.0) — ☐
 - Destruction (small + large rivers)
