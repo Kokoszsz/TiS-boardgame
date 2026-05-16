@@ -3,9 +3,12 @@ from __future__ import annotations
 import pygame
 
 from hexwar.core.actions import (
+    AssignCplLossAction, ChooseRetreatSplitAction,
     DeclareAttackAction, EndPhaseAction,
-    EntrenchAction, MoveAction, ResolveBattleAction, UndeclareAttackAction,
+    EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
+    RetreatUnitAction, SkipPursuitAction, UndeclareAttackAction,
 )
+from hexwar.core.battle import PostBattlePhase
 from hexwar.core.engine import Engine
 from hexwar.core.events import BattleResolved
 from hexwar.core.hex import HexCoord
@@ -24,8 +27,8 @@ from hexwar.client.hex_render import (
     hex_to_pixel,
     pixel_to_hex,
 )
-from hexwar.systems.test_system import (
-    PLAYER_A, PLAYER_B, SUB_PHASE_DECLARATION, SUB_PHASE_RESOLUTION, TestSystem,
+from hexwar.systems.wb48.system import (
+    PLAYER_A, PLAYER_B, SUB_PHASE_DECLARATION, SUB_PHASE_RESOLUTION, WB48System,
 )
 from hexwar.client.ui import UIButton
 
@@ -80,11 +83,19 @@ class PygameClient:
         self.unit_picker_units: list[Unit] = []
         self.unit_picker_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
         self.unit_picker_item_rects: list[pygame.Rect] = []
+        self.unit_picker_hex: HexCoord | None = None
         self.can_entrench = False
 
         # Combat declaration UI state
         self.selected_attackers: list[str] = []
         self.selected_battle_id: int | None = None
+
+        # Post-battle UI state
+        self.retreat_split_open = False
+        self.retreat_split_options: list[ChooseRetreatSplitAction] = []
+        self.retreat_split_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self.retreat_split_rects: list[pygame.Rect] = []
+        self.post_battle_selected_unit: str | None = None
 
         self.buttons: list[UIButton] = []
         self._build_buttons()
@@ -124,6 +135,8 @@ class PygameClient:
                         self._undo()
                     elif event.key == pygame.K_d:
                         self._undeclare_selected()
+                    elif event.key == pygame.K_s:
+                        self._do_skip_pursuit()
                     elif event.key == pygame.K_q:
                         running = False
 
@@ -135,6 +148,9 @@ class PygameClient:
     def _handle_left_click(self, pos: tuple[int, int]) -> None:
         if self.unit_picker_open:
             self._handle_picker_click(pos)
+            return
+        if self.retreat_split_open:
+            self._handle_retreat_split_click(pos)
             return
 
         if pos[1] > SCREEN_H - UI_HEIGHT:
@@ -204,7 +220,8 @@ class PygameClient:
         if self._in_declaration_mode():
             return state.metadata.get("declaration_complete", False)
         if self._in_resolution_mode():
-            return not any(not b.get("resolved") for b in state.metadata.get("battles", []))
+            battles = state.metadata.get("battles", [])
+            return all(b.resolved and b.post_phase == PostBattlePhase.DONE for b in battles)
         return True
 
     def _handle_ui_click(self, pos: tuple[int, int]) -> None:
@@ -223,9 +240,10 @@ class PygameClient:
         text = self.font_big.render(btn.label, True, text_col)
         self.screen.blit(text, (btn.rect.x + 8, btn.rect.y + 10))
 
-    def _open_unit_picker(self, units: list[Unit], click_pos: tuple[int, int]) -> None:
+    def _open_unit_picker(self, units: list[Unit], click_pos: tuple[int, int], hex_coord: HexCoord | None = None) -> None:
         self.unit_picker_open = True
         self.unit_picker_units = units
+        self.unit_picker_hex = hex_coord
         item_h = 30
         panel_w = 200
         panel_h = len(units) * item_h + 10
@@ -241,8 +259,29 @@ class PygameClient:
         for i, rect in enumerate(self.unit_picker_item_rects):
             if rect.collidepoint(pos):
                 unit_id = self.unit_picker_units[i].id
-                self._close_picker()
-                self._select_unit(unit_id)
+                unit_name = self.unit_picker_units[i].name
+                battle = self._get_active_post_battle()
+                if battle and battle.post_phase in (PostBattlePhase.ATTACKER_CPL, PostBattlePhase.DEFENDER_CPL, PostBattlePhase.MANDATORY_CPL):
+                    self._close_picker()
+                    player = self.engine.state.active_player
+                    action = AssignCplLossAction(player=player, battle_id=battle.id, unit_id=unit_id)
+                    events = self.engine.submit_action(action)
+                    self.event_log.append(f"Unit {unit_name} destroyed (CPL)")
+                    for e in events:
+                        self.event_log.append(str(e))
+                    self.post_battle_selected_unit = None
+                elif battle and battle.post_phase == PostBattlePhase.PURSUIT:
+                    self._close_picker()
+                    self.post_battle_selected_unit = unit_id
+                elif self._in_declaration_mode():
+                    committed = self.engine.state.metadata.get("committed_attackers", set())
+                    if unit_id in committed:
+                        return
+                    self._close_picker()
+                    self._toggle_attacker_selection(unit_id, False)
+                else:
+                    self._close_picker()
+                    self._select_unit(unit_id)
                 return
         self._close_picker()
 
@@ -294,8 +333,8 @@ class PygameClient:
 
         # Check if clicked on a declared battle's defender hex (to select that battle)
         for battle in battles:
-            if clicked in battle.get("defender_hexes", ()):
-                self.selected_battle_id = battle["id"]
+            if clicked in battle.defender_hexes:
+                self.selected_battle_id = battle.id
                 self.selected_attackers.clear()
                 return
 
@@ -304,17 +343,28 @@ class PygameClient:
         committed = self.engine.state.metadata.get("committed_attackers", set())
 
         if friendly:
+            uncommitted = [u for u in friendly if u.id not in committed]
+
+            # Multiple friendly on hex with at least one uncommitted → picker
+            # (picker shows committed grayed with [ATK])
+            if len(friendly) > 1 and uncommitted and not shift:
+                px, py = hex_to_pixel(clicked, HEX_SIZE)
+                screen_pos = (int(px + self.camera_offset[0]), int(py + self.camera_offset[1]))
+                self._open_unit_picker(friendly, screen_pos, hex_coord=clicked)
+                self.selected_battle_id = None
+                return
+
+            # All committed here → show battle they belong to
             committed_here = [u for u in friendly if u.id in committed]
             if committed_here and not shift:
                 for battle in battles:
-                    if committed_here[0].id in battle.get("attacker_ids", ()):
-                        self.selected_battle_id = battle["id"]
+                    if committed_here[0].id in battle.attacker_ids:
+                        self.selected_battle_id = battle.id
                         self.selected_attackers.clear()
                         return
 
-            available = [u for u in friendly if u.id not in committed]
-            if available:
-                self._toggle_attacker_selection(available[0].id, shift)
+            if uncommitted:
+                self._toggle_attacker_selection(uncommitted[0].id, shift)
                 self.selected_battle_id = None
                 return
 
@@ -347,7 +397,7 @@ class PygameClient:
         player = self.engine.state.active_player
         if old_battle is not None:
             self.engine.submit_action(
-                UndeclareAttackAction(player=player, battle_id=old_battle["id"])
+                UndeclareAttackAction(player=player, battle_id=old_battle.id)
             )
         action = DeclareAttackAction(
             player=player, attacker_ids=attacker_ids, defender_hexes=defender_hexes,
@@ -360,37 +410,52 @@ class PygameClient:
         if old_battle is not None:
             self.engine.submit_action(DeclareAttackAction(
                 player=player,
-                attacker_ids=tuple(old_battle["attacker_ids"]),
-                defender_hexes=tuple(old_battle["defender_hexes"]),
+                attacker_ids=tuple(old_battle.attacker_ids),
+                defender_hexes=tuple(old_battle.defender_hexes),
             ))
         self.event_log.append(error_msg)
         return False
 
     def _do_declare_attack(self, target_hex: HexCoord) -> None:
+        attacker_unit = self.engine.state.get_unit(self.selected_attackers[0]) if self.selected_attackers else None
+        attacker_hex = attacker_unit.position if attacker_unit else None
+
         battles = self.engine.state.metadata.get("battles", [])
         existing = next(
-            (b for b in battles if target_hex in b.get("defender_hexes", ())), None
+            (b for b in battles if target_hex in b.defender_hexes), None
         )
         if existing:
-            merged = tuple(sorted(set(existing["attacker_ids"]) | set(self.selected_attackers)))
-            defender_hexes = tuple(existing["defender_hexes"])
+            merged = tuple(sorted(set(existing.attacker_ids) | set(self.selected_attackers)))
+            defender_hexes = tuple(existing.defender_hexes)
         else:
             merged = tuple(sorted(self.selected_attackers))
             defender_hexes = (target_hex,)
         if self._redeclare_with_rollback(existing, merged, defender_hexes, "[INVALID] Cannot declare that attack"):
             self.selected_attackers.clear()
+            self._reopen_picker_if_needed(attacker_hex)
+
+    def _reopen_picker_if_needed(self, attacker_hex: HexCoord | None) -> None:
+        if attacker_hex is None:
+            return
+        player = self.engine.state.active_player
+        friendly = [u for u in self.engine.state.units_at(attacker_hex) if u.player == player]
+        if len(friendly) < 2:
+            return
+        px, py = hex_to_pixel(attacker_hex, HEX_SIZE)
+        screen_pos = (int(px + self.camera_offset[0]), int(py + self.camera_offset[1]))
+        self._open_unit_picker(friendly, screen_pos, hex_coord=attacker_hex)
 
     def _extend_battle_defenders(self, target_hex: HexCoord) -> None:
         """Add a new defender hex to the currently selected battle (fan-out)."""
         battles = self.engine.state.metadata.get("battles", [])
-        battle = next((b for b in battles if b["id"] == self.selected_battle_id), None)
+        battle = next((b for b in battles if b.id == self.selected_battle_id), None)
         if battle is None:
             return
-        if target_hex in battle.get("defender_hexes", ()):
+        if target_hex in battle.defender_hexes:
             return
-        new_defender_hexes = tuple(sorted(set(battle["defender_hexes"]) | {target_hex}))
+        new_defender_hexes = tuple(sorted(set(battle.defender_hexes) | {target_hex}))
         if self._redeclare_with_rollback(
-            battle, tuple(battle["attacker_ids"]), new_defender_hexes,
+            battle, tuple(battle.attacker_ids), new_defender_hexes,
             "[INVALID] Cannot extend battle to that hex",
         ):
             self.selected_battle_id = None
@@ -415,23 +480,195 @@ class PygameClient:
     # ------------------------------------------------------------------
 
     def _handle_resolution_click(self, clicked: HexCoord) -> None:
-        """Handle clicks during combat resolution sub-phase.
-        Click on a battle's defender hex to resolve it."""
+        """Handle clicks during combat resolution sub-phase."""
         state = self.engine.state
         battles = state.metadata.get("battles", [])
 
+        active_post = self._get_active_post_battle()
+        if active_post:
+            self._handle_post_battle_click(clicked, active_post)
+            return
+
         for battle in battles:
-            if battle.get("resolved"):
+            if battle.resolved:
                 continue
-            if clicked in battle.get("defender_hexes", ()):
-                self._do_resolve_battle(battle["id"])
+            if clicked in battle.defender_hexes:
+                self._do_resolve_battle(battle.id)
                 return
-            # Also allow clicking attacker hexes
-            for uid in battle.get("attacker_ids", ()):
+            for uid in battle.attacker_ids:
                 unit = state.get_unit(uid)
                 if unit and unit.position == clicked:
-                    self._do_resolve_battle(battle["id"])
+                    self._do_resolve_battle(battle.id)
                     return
+
+    def _get_active_post_battle(self):
+        """Find battle in active post-battle phase."""
+        for battle in self.engine.state.metadata.get("battles", []):
+            if battle.resolved and battle.post_phase != PostBattlePhase.DONE:
+                return battle
+        return None
+
+    def _handle_post_battle_click(self, clicked: HexCoord, battle) -> None:
+        """Route clicks based on current post-battle phase."""
+        state = self.engine.state
+        player = state.active_player
+        phase = battle.post_phase
+
+        if phase in (PostBattlePhase.ATTACKER_SPLIT, PostBattlePhase.DEFENDER_SPLIT):
+            return
+
+        if phase in (PostBattlePhase.ATTACKER_CPL, PostBattlePhase.DEFENDER_CPL, PostBattlePhase.MANDATORY_CPL):
+            units_here = state.units_at(clicked)
+            legal = self.engine.get_legal_actions()
+            eligible = [
+                u for u in units_here
+                if any(a == AssignCplLossAction(player=player, battle_id=battle.id, unit_id=u.id) for a in legal)
+            ]
+            if len(eligible) > 1:
+                px, py = hex_to_pixel(clicked, HEX_SIZE)
+                screen_pos = (int(px + self.camera_offset[0]), int(py + self.camera_offset[1]))
+                self._open_unit_picker(eligible, screen_pos, hex_coord=clicked)
+                return
+            if eligible:
+                action = AssignCplLossAction(player=player, battle_id=battle.id, unit_id=eligible[0].id)
+                events = self.engine.submit_action(action)
+                self.event_log.append(f"Unit {eligible[0].name} destroyed (CPL)")
+                for e in events:
+                    self.event_log.append(str(e))
+                self.post_battle_selected_unit = None
+                return
+
+        if phase in (PostBattlePhase.ATTACKER_RETREAT, PostBattlePhase.DEFENDER_RETREAT):
+            if self.post_battle_selected_unit:
+                action = RetreatUnitAction(
+                    player=player, battle_id=battle.id,
+                    unit_id=self.post_battle_selected_unit, target=clicked,
+                )
+                legal = self.engine.get_legal_actions()
+                if any(a == action for a in legal):
+                    events = self.engine.submit_action(action)
+                    unit = state.get_unit(self.post_battle_selected_unit)
+                    self.event_log.append(f"{unit.name} retreats to {clicked}")
+                    for e in events:
+                        self.event_log.append(str(e))
+                    self.post_battle_selected_unit = None
+                    return
+            # Select a unit that needs to retreat
+            units_here = state.units_at(clicked)
+            for unit in units_here:
+                if unit.id in battle.units_needing_retreat:
+                    self.post_battle_selected_unit = unit.id
+                    return
+            self.post_battle_selected_unit = None
+
+        if phase == PostBattlePhase.PURSUIT:
+            if self.post_battle_selected_unit:
+                action = PursuitAction(
+                    player=player, battle_id=battle.id,
+                    unit_id=self.post_battle_selected_unit, target=clicked,
+                )
+                legal = self.engine.get_legal_actions()
+                if any(a == action for a in legal):
+                    events = self.engine.submit_action(action)
+                    self.event_log.append(f"Pursuit to {clicked}")
+                    for e in events:
+                        self.event_log.append(str(e))
+                    self.post_battle_selected_unit = None
+                    return
+            # Select pursuing unit (may belong to either player)
+            pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+            eligible = [
+                u for u in state.units_at(clicked)
+                if u.id in pursuer_ids and u.id not in battle.units_pursued
+            ]
+            if len(eligible) > 1:
+                px, py = hex_to_pixel(clicked, HEX_SIZE)
+                screen_pos = (int(px + self.camera_offset[0]), int(py + self.camera_offset[1]))
+                self._open_unit_picker(eligible, screen_pos)
+                return
+            if eligible:
+                self.post_battle_selected_unit = eligible[0].id
+                return
+            self.post_battle_selected_unit = None
+
+    def _open_retreat_split(self) -> None:
+        """Open retreat split option panel."""
+        legal = self.engine.get_legal_actions()
+        self.retreat_split_options = [
+            a for a in legal if isinstance(a, ChooseRetreatSplitAction)
+        ]
+        if not self.retreat_split_options:
+            return
+        self.retreat_split_open = True
+        # Build rects for panel
+        panel_w = 260
+        item_h = 30
+        panel_h = len(self.retreat_split_options) * item_h + 20
+        panel_x = SCREEN_W // 2 - panel_w // 2
+        panel_y = (SCREEN_H - UI_HEIGHT) // 2 - panel_h // 2
+        self.retreat_split_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        self.retreat_split_rects = []
+        for i in range(len(self.retreat_split_options)):
+            r = pygame.Rect(panel_x + 10, panel_y + 10 + i * item_h, panel_w - 20, item_h - 4)
+            self.retreat_split_rects.append(r)
+
+    def _handle_retreat_split_click(self, pos: tuple[int, int]) -> None:
+        """Handle click on retreat split panel."""
+        for i, rect in enumerate(self.retreat_split_rects):
+            if rect.collidepoint(pos):
+                action = self.retreat_split_options[i]
+                events = self.engine.submit_action(action)
+                self.event_log.append(
+                    f"Split: retreat {action.retreat_hexes} hex, lose {action.unit_losses} unit(s)"
+                )
+                for e in events:
+                    self.event_log.append(str(e))
+                self.retreat_split_open = False
+                self.retreat_split_options = []
+                return
+        # Click outside panel — close
+        if not self.retreat_split_rect.collidepoint(pos):
+            self.retreat_split_open = False
+
+    def _do_skip_pursuit(self) -> None:
+        """Skip pursuit for active battle."""
+        battle = self._get_active_post_battle()
+        if not battle or battle.post_phase != PostBattlePhase.PURSUIT:
+            return
+        action = SkipPursuitAction(player=self.engine.state.active_player, battle_id=battle.id)
+        legal = self.engine.get_legal_actions()
+        if any(a == action for a in legal):
+            events = self.engine.submit_action(action)
+            self.event_log.append("Pursuit skipped")
+            for e in events:
+                self.event_log.append(str(e))
+            self.post_battle_selected_unit = None
+
+    def _post_battle_controls_text(self, battle) -> str:
+        phase = battle.post_phase
+        phase_names = {
+            PostBattlePhase.ATTACKER_SPLIT: "ATTACKER SPLIT",
+            PostBattlePhase.DEFENDER_SPLIT: "DEFENDER SPLIT",
+            PostBattlePhase.ATTACKER_CPL: "ATTACKER CPL",
+            PostBattlePhase.DEFENDER_CPL: "DEFENDER CPL",
+            PostBattlePhase.MANDATORY_CPL: "MANDATORY CPL",
+            PostBattlePhase.ATTACKER_RETREAT: "ATTACKER RETREAT",
+            PostBattlePhase.DEFENDER_RETREAT: "DEFENDER RETREAT",
+            PostBattlePhase.PURSUIT: "PURSUIT",
+        }
+        name = phase_names.get(phase, str(phase))
+        if phase in (PostBattlePhase.ATTACKER_SPLIT, PostBattlePhase.DEFENDER_SPLIT):
+            return f"Battle #{battle.id}  |  {name}  |  Choose retreat/loss split"
+        if phase in (PostBattlePhase.ATTACKER_CPL, PostBattlePhase.DEFENDER_CPL, PostBattlePhase.MANDATORY_CPL):
+            return f"Battle #{battle.id}  |  {name}  |  Click unit to destroy  |  {battle.remaining_cpl_to_assign} remaining"
+        if phase in (PostBattlePhase.ATTACKER_RETREAT, PostBattlePhase.DEFENDER_RETREAT):
+            remaining = len([uid for uid in battle.units_needing_retreat if self.engine.state.get_unit(uid)])
+            return f"Battle #{battle.id}  |  {name}  |  Click unit then target hex  |  {remaining} unit(s), {battle.remaining_retreat_steps} step(s)"
+        if phase == PostBattlePhase.PURSUIT:
+            pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+            remaining = sum(1 for uid in pursuer_ids if uid not in battle.units_pursued and self.engine.state.get_unit(uid))
+            return f"Battle #{battle.id}  |  {name}  |  Click unit then target  |  {remaining} unit(s) left  |  S: skip all"
+        return f"Battle #{battle.id}  |  {name}"
 
     def _do_resolve_battle(self, battle_id: int) -> None:
         """Submit ResolveBattleAction for the given battle."""
@@ -502,9 +739,13 @@ class PygameClient:
             if self._in_declaration_mode():
                 self.event_log.append("[BLOCKED] Must declare all obligated attacks first")
             elif self._in_resolution_mode():
-                unresolved = sum(1 for b in self.engine.state.metadata.get("battles", [])
-                                 if not b.get("resolved"))
-                self.event_log.append(f"[BLOCKED] {unresolved} battle(s) still unresolved")
+                battles = self.engine.state.metadata.get("battles", [])
+                unresolved = sum(1 for b in battles if not b.resolved)
+                in_post = sum(1 for b in battles if b.resolved and b.post_phase != PostBattlePhase.DONE)
+                if unresolved:
+                    self.event_log.append(f"[BLOCKED] {unresolved} battle(s) still unresolved")
+                elif in_post:
+                    self.event_log.append(f"[BLOCKED] {in_post} battle(s) in post-battle phase")
             return
         action = EndPhaseAction(player=self.engine.state.active_player)
         events = self.engine.submit_action(action)
@@ -527,9 +768,19 @@ class PygameClient:
             self._draw_declaration_overlay()
         if self._in_resolution_mode():
             self._draw_resolution_overlay()
+            self._draw_post_battle_highlights()
         self._draw_ui()
         if self.unit_picker_open:
             self._draw_unit_picker()
+        if self.retreat_split_open:
+            self._draw_retreat_split_panel()
+        # Auto-open split panel when entering split phase
+        battle = self._get_active_post_battle()
+        if battle and battle.post_phase in (PostBattlePhase.ATTACKER_SPLIT, PostBattlePhase.DEFENDER_SPLIT):
+            if not self.retreat_split_open:
+                self._open_retreat_split()
+        elif self.retreat_split_open:
+            self.retreat_split_open = False
         pygame.display.flip()
 
     def _draw_unit_picker(self) -> None:
@@ -542,19 +793,103 @@ class PygameClient:
 
         mouse_pos = pygame.mouse.get_pos()
         remaining_mp = self.engine.state.metadata.get("remaining_mp", {})
+        committed = self.engine.state.metadata.get("committed_attackers", set()) if self._in_declaration_mode() else set()
 
         for i, (unit, rect) in enumerate(zip(self.unit_picker_units, self.unit_picker_item_rects)):
-            hovered = rect.collidepoint(mouse_pos)
-            bg = PANEL_ITEM_HOVER if hovered else PANEL_ITEM_BG
+            is_committed = unit.id in committed
+            hovered = rect.collidepoint(mouse_pos) and not is_committed
+            bg = (80, 80, 80) if is_committed else (PANEL_ITEM_HOVER if hovered else PANEL_ITEM_BG)
             pygame.draw.rect(self.screen, bg, rect)
 
             color = PLAYER_COLORS.get(unit.player, (200, 200, 200))
             pygame.draw.circle(self.screen, color, (rect.x + 14, rect.centery), 8)
 
             mp_left = remaining_mp.get(unit.id, unit.stats.get("movement", 1))
-            info = f"{unit.name}  MP:{mp_left}"
-            text = self.font_small.render(info, True, TEXT_COLOR)
+            suffix = "  [ATK]" if is_committed else ""
+            info = f"{unit.name}  MP:{mp_left}{suffix}"
+            text_color = (120, 120, 120) if is_committed else TEXT_COLOR
+            text = self.font_small.render(info, True, text_color)
             self.screen.blit(text, (rect.x + 28, rect.centery - text.get_height() // 2))
+
+    def _draw_retreat_split_panel(self) -> None:
+        """Draw retreat/loss split choice panel."""
+        if not self.retreat_split_options:
+            return
+        panel_surf = pygame.Surface(
+            (self.retreat_split_rect.width, self.retreat_split_rect.height), pygame.SRCALPHA
+        )
+        panel_surf.fill(PANEL_BG)
+        self.screen.blit(panel_surf, self.retreat_split_rect.topleft)
+        pygame.draw.rect(self.screen, PANEL_BORDER, self.retreat_split_rect, 1)
+
+        mouse_pos = pygame.mouse.get_pos()
+        side = self.retreat_split_options[0].side if self.retreat_split_options else ""
+        title = self.font.render(f"Choose {side} split:", True, TEXT_COLOR)
+        self.screen.blit(title, (self.retreat_split_rect.x + 10, self.retreat_split_rect.y - 18))
+
+        for i, (opt, rect) in enumerate(zip(self.retreat_split_options, self.retreat_split_rects)):
+            hovered = rect.collidepoint(mouse_pos)
+            bg = PANEL_ITEM_HOVER if hovered else PANEL_ITEM_BG
+            pygame.draw.rect(self.screen, bg, rect)
+            label = f"Retreat {opt.retreat_hexes} hex  |  Lose {opt.unit_losses} unit(s)"
+            text = self.font_small.render(label, True, TEXT_COLOR)
+            self.screen.blit(text, (rect.x + 10, rect.centery - text.get_height() // 2))
+
+    def _draw_post_battle_highlights(self) -> None:
+        """Draw highlights for post-battle interactions."""
+        battle = self._get_active_post_battle()
+        if not battle:
+            return
+        state = self.engine.state
+        phase = battle.post_phase
+
+        if phase in (PostBattlePhase.ATTACKER_CPL, PostBattlePhase.DEFENDER_CPL, PostBattlePhase.MANDATORY_CPL):
+            # Highlight units eligible for CPL loss in red
+            if phase == PostBattlePhase.ATTACKER_CPL:
+                unit_ids = battle.attacker_ids
+            elif phase == PostBattlePhase.DEFENDER_CPL:
+                unit_ids = battle.defender_ids
+            else:
+                if battle.attacker_mandatory_cpl > 0:
+                    unit_ids = battle.attacker_ids
+                else:
+                    unit_ids = battle.defender_ids
+            for uid in unit_ids:
+                unit = state.get_unit(uid)
+                if unit:
+                    draw_highlight(self.screen, unit.position, (255, 50, 50, 100), self.camera_offset)
+
+        elif phase in (PostBattlePhase.ATTACKER_RETREAT, PostBattlePhase.DEFENDER_RETREAT):
+            # Highlight units needing retreat in orange
+            for uid in battle.units_needing_retreat:
+                unit = state.get_unit(uid)
+                if unit:
+                    color = (255, 200, 50, 100) if uid != self.post_battle_selected_unit else (255, 255, 100, 140)
+                    draw_highlight(self.screen, unit.position, color, self.camera_offset)
+            # If unit selected, highlight valid retreat targets in green
+            if self.post_battle_selected_unit:
+                legal = self.engine.get_legal_actions()
+                for a in legal:
+                    if isinstance(a, RetreatUnitAction) and a.unit_id == self.post_battle_selected_unit:
+                        draw_highlight(self.screen, a.target, (100, 200, 100, 80), self.camera_offset)
+
+        elif phase == PostBattlePhase.PURSUIT:
+            selected = self.post_battle_selected_unit
+            pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+            for uid in pursuer_ids:
+                if uid in battle.units_pursued:
+                    continue
+                unit = state.get_unit(uid)
+                if unit:
+                    color = (150, 200, 255, 140) if uid == selected else (100, 150, 255, 100)
+                    draw_highlight(self.screen, unit.position, color, self.camera_offset)
+            # Highlight pursuit targets in green
+            active_uid = selected
+            if active_uid:
+                legal = self.engine.get_legal_actions()
+                for a in legal:
+                    if isinstance(a, PursuitAction) and a.unit_id == active_uid:
+                        draw_highlight(self.screen, a.target, (100, 200, 100, 80), self.camera_offset)
 
     def _draw_map(self) -> None:
         state = self.engine.state
@@ -668,12 +1003,12 @@ class PygameClient:
                                    (int(base_sx), int(base_sy) + 20), 5, 1)
 
     def _draw_battle_arrows(
-        self, state: GameState, battle: dict, arrow_color: tuple,
+        self, state: GameState, battle, arrow_color: tuple,
     ) -> tuple[float, float, str] | None:
         """Draw arrows for a battle, return (def_cx, def_cy, ratio_text) or None."""
-        attacker_ids = battle.get("attacker_ids", ())
-        defender_hexes = battle.get("defender_hexes", ())
-        defender_ids = battle.get("defender_ids", ())
+        attacker_ids = battle.attacker_ids
+        defender_hexes = battle.defender_hexes
+        defender_ids = battle.defender_ids
 
         if not defender_hexes:
             return None
@@ -720,8 +1055,7 @@ class PygameClient:
     def _draw_declaration_overlay(self) -> None:
         state = self.engine.state
         for battle in state.metadata.get("battles", []):
-            battle_id = battle.get("id")
-            is_selected = (battle_id == self.selected_battle_id)
+            is_selected = (battle.id == self.selected_battle_id)
             arrow_color = BATTLE_ARROW_SELECTED if is_selected else BATTLE_ARROW_COLOR
 
             result = self._draw_battle_arrows(state, battle, arrow_color)
@@ -731,14 +1065,13 @@ class PygameClient:
             self._draw_battle_label(ratio_text, (def_cx, def_cy), arrow_color)
 
             if is_selected:
-                for dh in battle.get("defender_hexes", ()):
+                for dh in battle.defender_hexes:
                     draw_highlight(self.screen, dh, (255, 255, 100, 60), self.camera_offset)
 
     def _draw_resolution_overlay(self) -> None:
         state = self.engine.state
         for battle in state.metadata.get("battles", []):
-            resolved = battle.get("resolved", False)
-            battle_id = battle.get("id")
+            resolved = battle.resolved
             arrow_color = BATTLE_RESOLVED_COLOR if resolved else BATTLE_UNRESOLVED_COLOR
 
             result = self._draw_battle_arrows(state, battle, arrow_color)
@@ -747,15 +1080,15 @@ class PygameClient:
             def_cx, def_cy, ratio_text = result
 
             if resolved:
-                dice = battle.get("dice_roll", (0, 0))
-                res = battle.get("result", "?")
-                label_text = f"#{battle_id} {ratio_text} [{dice[0]}+{dice[1]}={sum(dice)}] {res}"
+                dice = battle.dice_roll or (0, 0)
+                res = battle.result or "?"
+                label_text = f"#{battle.id} {ratio_text} [{dice[0]}+{dice[1]}={sum(dice)}] {res}"
             else:
-                label_text = f"#{battle_id} {ratio_text} [click to resolve]"
+                label_text = f"#{battle.id} {ratio_text} [click to resolve]"
             self._draw_battle_label(label_text, (def_cx, def_cy), arrow_color, self.font_small)
 
             if not resolved:
-                for dh in battle.get("defender_hexes", ()):
+                for dh in battle.defender_hexes:
                     draw_highlight(self.screen, dh, (255, 200, 50, 60), self.camera_offset)
 
     def _draw_ui(self) -> None:
@@ -785,11 +1118,15 @@ class PygameClient:
                 )
         elif self._in_resolution_mode():
             battles = state.metadata.get("battles", [])
-            unresolved = sum(1 for b in battles if not b.get("resolved"))
-            controls = (
-                f"RESOLUTION  |  Click battle to resolve  |  "
-                f"{unresolved}/{len(battles)} remaining  |  E: end phase"
-            )
+            active_pb = self._get_active_post_battle()
+            if active_pb:
+                controls = self._post_battle_controls_text(active_pb)
+            else:
+                unresolved = sum(1 for b in battles if not b.resolved)
+                controls = (
+                    f"RESOLUTION  |  Click battle to resolve  |  "
+                    f"{unresolved}/{len(battles)} remaining  |  E: end phase"
+                )
         else:
             controls = "Click: select/move/attack  |  F: entrench  |  E: end phase  |  U: undo  |  RMB: pan  |  Q: quit"
         ctrl_surf = self.font.render(controls, True, (150, 150, 150))
@@ -835,7 +1172,7 @@ def build_test_scenario() -> Engine:
              player=PLAYER_B, position=HexCoord(6, 4), stats={"strength": 5, "movement": 3}),
     ]
 
-    system = TestSystem()
+    system = WB48System()
     rng = GameRNG(seed=42)
 
     state = build_initial_state(

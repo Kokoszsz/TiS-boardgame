@@ -1,4 +1,4 @@
-"""Smoke test — runs a few turns with TestSystem to verify engine works end-to-end."""
+"""Smoke test — runs a few turns with WB48System to verify engine works end-to-end."""
 
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
@@ -7,7 +7,7 @@ from hexwar.core.state import build_initial_state
 from hexwar.core.rng import GameRNG
 from hexwar.core.engine import Engine
 from hexwar.core.actions import MoveAction, AttackAction, EndPhaseAction
-from hexwar.systems.test_system import TestSystem, PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import WB48System, PLAYER_A, PLAYER_B
 
 
 def build_test_map() -> HexMap:
@@ -21,7 +21,7 @@ def build_test_map() -> HexMap:
 
 def main():
     hex_map = build_test_map()
-    system = TestSystem()
+    system = WB48System()
     rng = GameRNG(seed=42)
 
     units = [

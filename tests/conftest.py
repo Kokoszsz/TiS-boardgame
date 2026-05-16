@@ -9,7 +9,7 @@ from hexwar.core.rng import GameRNG
 from hexwar.core.state import build_initial_state
 from hexwar.core.unit import Unit, UnitId
 from hexwar.systems.base import System
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B, TestSystem
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B, WB48System
 
 
 def make_map(width: int = 6, height: int = 6, default_terrain: TerrainType = TerrainType.PLAIN) -> HexMap:
@@ -53,7 +53,7 @@ def make_engine(
     if units is None:
         units = []
     if system is None:
-        system = TestSystem()
+        system = WB48System()
 
     state = build_initial_state(
         scenario_id="test",

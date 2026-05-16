@@ -10,7 +10,7 @@ ZOC rules:
 
 from hexwar.core.actions import EndPhaseAction, MoveAction
 from hexwar.core.hex import HexCoord
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
     assert_action_illegal,
@@ -119,8 +119,8 @@ class TestZOCIncludesOwnHex:
             make_unit("a1", player=PLAYER_A, q=1, r=2, movement=2),
             make_unit("b1", player=PLAYER_B, q=3, r=2, type_id="infantry"),
         ])
-        from hexwar.systems.test_system import TestSystem
-        system: TestSystem = engine.system
+        from hexwar.systems.wb48.system import WB48System
+        system: WB48System = engine.system
         zoc_map = system.enemy_zoc_map(engine.state, PLAYER_A)
         assert HexCoord(3, 2) in zoc_map
         assert "b1" in zoc_map[HexCoord(3, 2)]

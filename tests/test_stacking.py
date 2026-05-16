@@ -6,7 +6,7 @@ WB-48: infantry/cavalry full = 2, weakened = 1, artillery/HQ = 1.
 
 from hexwar.core.actions import EndPhaseAction, MoveAction
 from hexwar.core.hex import HexCoord
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
     assert_action_illegal,

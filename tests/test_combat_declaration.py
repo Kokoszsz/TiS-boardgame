@@ -7,7 +7,7 @@ from hexwar.core.actions import (
 )
 from hexwar.core.events import AttackDeclared, AttackUndeclared
 from hexwar.core.hex import HexCoord
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
     assert_action_illegal,
@@ -69,9 +69,9 @@ class TestDeclarationBasic:
         engine.submit_action(declare)
         battles = engine.state.metadata["battles"]
         assert len(battles) == 1
-        assert battles[0]["id"] == 1
-        assert battles[0]["attacker_ids"] == ("a1",)
-        assert battles[0]["defender_ids"] == ("b1",)
+        assert battles[0].id == 1
+        assert battles[0].attacker_ids == ("a1",)
+        assert battles[0].defender_ids == ("b1",)
 
     def test_cannot_declare_non_adjacent(self):
         engine = make_engine(units=[

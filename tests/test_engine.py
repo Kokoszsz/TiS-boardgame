@@ -9,7 +9,7 @@ from hexwar.core.events import (
     AttackDeclared, AttackUndeclared, PhaseChanged, TurnChanged, UnitMoved,
 )
 from hexwar.core.hex import HexCoord
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
     assert_action_illegal,

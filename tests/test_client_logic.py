@@ -19,7 +19,7 @@ from hexwar.core.rng import GameRNG
 from hexwar.core.state import build_initial_state
 from hexwar.core.engine import Engine
 from hexwar.core.unit import Unit
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B, TestSystem
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B, WB48System
 
 
 def _make_map(w=6, h=6):
@@ -37,7 +37,7 @@ def _make_engine(units, hex_map=None):
         scenario_id="test", scenario_name="Test", system_id="test",
         hex_map=hex_map, units=units, active_player=PLAYER_A,
     )
-    return Engine(state, TestSystem(), GameRNG(seed=42))
+    return Engine(state, WB48System(), GameRNG(seed=42))
 
 
 def _make_unit(id, player=PLAYER_A, q=0, r=0, type_id="infantry", strength=3, movement=2, **extra):
@@ -271,7 +271,7 @@ class TestDeclarationMode:
 
         battles = engine.state.metadata.get("battles", [])
         assert len(battles) == 1
-        assert "a1" in battles[0]["attacker_ids"]
+        assert "a1" in battles[0].attacker_ids
 
     def test_declare_clears_selected_attackers(self, mock_pygame):
         engine = _make_engine([
@@ -315,7 +315,7 @@ class TestDeclarationMode:
         client._do_declare_attack(HexCoord(2, 1))
 
         battles = engine.state.metadata.get("battles", [])
-        client.selected_battle_id = battles[0]["id"]
+        client.selected_battle_id = battles[0].id
         client._undeclare_selected()
 
         assert len(engine.state.metadata.get("battles", [])) == 0
@@ -337,6 +337,77 @@ class TestDeclarationMode:
 
         client.selected_battle_id = 999
         client._undeclare_selected()  # not in declaration mode
+
+
+class TestDeclarationMultiUnitSelection:
+    def _enter_combat(self, engine, client):
+        client._end_phase()
+
+    def test_picker_opens_for_stacked_attackers(self, mock_pygame):
+        engine = _make_engine([
+            _make_unit("a1", q=1, r=1),
+            _make_unit("a2", q=1, r=1, stack_size=1),
+            _make_unit("b1", player=PLAYER_B, q=2, r=1),
+        ])
+        client = _make_client(engine, mock_pygame)
+        self._enter_combat(engine, client)
+
+        client._handle_declaration_click(HexCoord(1, 1))
+        assert client.unit_picker_open
+        assert len(client.unit_picker_units) == 2
+
+    def test_picker_selects_attacker_in_declaration(self, mock_pygame):
+        engine = _make_engine([
+            _make_unit("a1", q=1, r=1),
+            _make_unit("a2", q=1, r=1, stack_size=1),
+            _make_unit("b1", player=PLAYER_B, q=2, r=1),
+        ])
+        client = _make_client(engine, mock_pygame)
+        self._enter_combat(engine, client)
+
+        client._handle_declaration_click(HexCoord(1, 1))
+        picked_id = client.unit_picker_units[0].id
+        # Simulate clicking first item in picker
+        pos = (client.unit_picker_item_rects[0].x + 1, client.unit_picker_item_rects[0].y + 1)
+        client._handle_picker_click(pos)
+        assert not client.unit_picker_open
+        assert picked_id in client.selected_attackers
+
+    def test_picker_reopens_when_one_unit_committed_other_not(self, mock_pygame):
+        """Bug 1 regression: clicking hex with mix of committed+uncommitted reopens picker.
+
+        Previous behavior: showed battle view, picker never reappeared.
+        """
+        engine = _make_engine([
+            _make_unit("a1", q=1, r=1),
+            _make_unit("a2", q=1, r=1, stack_size=1),
+            _make_unit("b1", player=PLAYER_B, q=2, r=1),
+        ])
+        client = _make_client(engine, mock_pygame)
+        self._enter_combat(engine, client)
+
+        # Commit a1 to a battle
+        client._handle_declaration_click(HexCoord(1, 1))  # opens picker
+        # Pick a1
+        a1_idx = next(i for i, u in enumerate(client.unit_picker_units) if u.id == "a1")
+        pos = (client.unit_picker_item_rects[a1_idx].x + 1, client.unit_picker_item_rects[a1_idx].y + 1)
+        client._handle_picker_click(pos)
+        # Declare attack with a1
+        client._handle_declaration_click(HexCoord(2, 1))
+        # a1 is now committed, a2 is not
+        committed = engine.state.metadata.get("committed_attackers", set())
+        assert "a1" in committed
+        assert "a2" not in committed
+
+        # Simulate user dismissing picker (click outside picker rect)
+        client._close_picker()
+        assert not client.unit_picker_open
+
+        # User clicks back on stacked hex — picker should reopen for a2
+        client._handle_declaration_click(HexCoord(1, 1))
+        assert client.unit_picker_open, "Picker should reopen for uncommitted a2"
+        # Picker shows BOTH a1 and a2 (a1 grayed [ATK], a2 selectable)
+        assert len(client.unit_picker_units) == 2
 
 
 class TestDeclarationClickHandling:
@@ -461,7 +532,7 @@ class TestResolutionMode:
         # Click defender hex to resolve
         client._handle_resolution_click(HexCoord(2, 1))
         battles = engine.state.metadata.get("battles", [])
-        assert battles[0].get("resolved", False)
+        assert battles[0].resolved
 
     def test_resolve_via_attacker_hex_click(self, mock_pygame):
         engine = _make_engine([
@@ -474,7 +545,27 @@ class TestResolutionMode:
         # Click attacker hex to resolve
         client._handle_resolution_click(HexCoord(1, 1))
         battles = engine.state.metadata.get("battles", [])
-        assert battles[0].get("resolved", False)
+        assert battles[0].resolved
+
+    def test_end_phase_blocked_during_post_battle(self, mock_pygame):
+        """Regression: end phase must not crash during active post-battle phases."""
+        engine = _make_engine([
+            _make_unit("a1", q=1, r=1),
+            _make_unit("b1", player=PLAYER_B, q=2, r=1),
+        ])
+        client = _make_client(engine, mock_pygame)
+        self._enter_resolution(engine, client)
+
+        client._handle_resolution_click(HexCoord(2, 1))
+        # Battle resolved but post-battle phases active
+        from hexwar.core.battle import PostBattlePhase
+        battles = engine.state.metadata.get("battles", [])
+        assert battles[0].resolved
+        if battles[0].post_phase != PostBattlePhase.DONE:
+            assert not client._can_end_phase()
+            client._end_phase()  # must not crash
+            assert engine.current_phase.id == "combat_a"
+            assert any("post-battle" in msg for msg in client.event_log)
 
     def test_end_phase_after_all_resolved(self, mock_pygame):
         engine = _make_engine([
@@ -485,6 +576,24 @@ class TestResolutionMode:
         self._enter_resolution(engine, client)
 
         client._handle_resolution_click(HexCoord(2, 1))
+        # Complete post-battle flow
+        from hexwar.core.actions import SkipPursuitAction
+        from hexwar.core.battle import PostBattlePhase
+        for _ in range(20):
+            battles = engine.state.metadata.get("battles", [])
+            if not battles or battles[0].post_phase == PostBattlePhase.DONE:
+                break
+            legal = engine.get_legal_actions()
+            # Prefer skip pursuit to avoid complex pursuit logic
+            skip = [a for a in legal if isinstance(a, SkipPursuitAction)]
+            if skip:
+                engine.submit_action(skip[0])
+                continue
+            post_actions = [a for a in legal if not isinstance(a, EndPhaseAction)]
+            if post_actions:
+                engine.submit_action(post_actions[0])
+            else:
+                break
         client._end_phase()
         # Should advance past combat_a
         assert engine.current_phase.id != "combat_a" or not client._in_resolution_mode()

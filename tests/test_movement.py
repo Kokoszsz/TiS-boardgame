@@ -3,7 +3,7 @@
 from hexwar.core.actions import EndPhaseAction, MoveAction
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import EdgeFeature, EdgeType, HexMap, TerrainLayer, TerrainType
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
     assert_action_illegal,

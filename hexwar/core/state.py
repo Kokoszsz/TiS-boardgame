@@ -77,6 +77,19 @@ class GameState:
         new_metadata = {k: v for k, v in self.metadata.items() if k not in keys}
         return dataclasses.replace(self, metadata=new_metadata)
 
+    def with_unit(self, unit: Unit) -> GameState:
+        old_unit = self.units.get(unit.id)
+        new_units = {**self.units, unit.id: unit}
+        new_by_hex = dict(self.units_by_hex)
+        if old_unit and old_unit.position != unit.position:
+            remaining = tuple(uid for uid in new_by_hex.get(old_unit.position, ()) if uid != unit.id)
+            if remaining:
+                new_by_hex[old_unit.position] = remaining
+            else:
+                new_by_hex.pop(old_unit.position, None)
+            new_by_hex[unit.position] = new_by_hex.get(unit.position, ()) + (unit.id,)
+        return dataclasses.replace(self, units=new_units, units_by_hex=new_by_hex)
+
     def with_unit_stats(self, unit_id: UnitId, **updates: Any) -> GameState:
         new_unit = self.units[unit_id].with_stats(**updates)
         return dataclasses.replace(self, units={**self.units, unit_id: new_unit})

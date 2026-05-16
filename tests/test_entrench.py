@@ -13,7 +13,7 @@ Rules:
 from hexwar.core.actions import EndPhaseAction, EntrenchAction, MoveAction
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
-from hexwar.systems.test_system import PLAYER_A, PLAYER_B
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
     assert_action_illegal,

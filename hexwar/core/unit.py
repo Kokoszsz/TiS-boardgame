@@ -25,24 +25,17 @@ class Unit:
     player: Player
     position: HexCoord
     stats: dict[str, Any] = field(default_factory=dict)
+    disorganized: bool = False
 
     def with_position(self, pos: HexCoord) -> Unit:
-        return Unit(
-            id=self.id,
-            name=self.name,
-            type_id=self.type_id,
-            player=self.player,
-            position=pos,
-            stats=self.stats,
-        )
+        import dataclasses
+        return dataclasses.replace(self, position=pos)
 
     def with_stats(self, **updates: Any) -> Unit:
+        import dataclasses
         new_stats = {**self.stats, **updates}
-        return Unit(
-            id=self.id,
-            name=self.name,
-            type_id=self.type_id,
-            player=self.player,
-            position=self.position,
-            stats=new_stats,
-        )
+        return dataclasses.replace(self, stats=new_stats)
+
+    def with_disorganized(self, value: bool) -> Unit:
+        import dataclasses
+        return dataclasses.replace(self, disorganized=value)
