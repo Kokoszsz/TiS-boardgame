@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from itertools import combinations
 
 from hexwar.core.actions import DeclareAttackAction, UndeclareAttackAction
@@ -9,15 +10,17 @@ from hexwar.core.hex import HexCoord
 from hexwar.core.state import GameState
 from hexwar.core.unit import BattleId, Player, UnitId
 
-SUB_PHASE_DECLARATION = "declaration"
-SUB_PHASE_RESOLUTION = "resolution"
+
+class CombatSubPhase(Enum):
+    DECLARATION = "declaration"
+    RESOLUTION = "resolution"
 
 
 class DeclarationMixin:
 
     def _init_combat_declaration(self, state: GameState, player: Player) -> GameState:
         obligated_attackers, obligated_enemies = self._compute_obligations(state, player)
-        state = state.with_metadata("combat_sub_phase", SUB_PHASE_DECLARATION)
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.DECLARATION)
         state = state.with_metadata("battles", [])
         state = state.with_metadata("next_battle_id", BattleId(1))
         state = state.with_metadata("committed_attackers", set())

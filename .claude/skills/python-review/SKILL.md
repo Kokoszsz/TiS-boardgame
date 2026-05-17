@@ -47,12 +47,19 @@ Read target files and check against each category:
 - Dict-as-struct patterns (dict with known schema should be dataclass/TypedDict)
 - Missing type annotations on public functions
 - Raw `str` where domain alias exists (`UnitId`, `Player`)
+- `getattr(obj, f"{var}_field")` — use enum + accessor instead
+- Per-side mirrored fields (`attacker_X`/`defender_X`) — use `dict[Side, X]` or accessor
+- Multi-bool "exactly one true" invariant — replace with single enum
+- `dict[K, V]` reused in 2+ places — wrap in named class with methods
 
 **Structure**
 - God classes (single class doing too many things)
+- God dataclasses (19+ fields mixing declaration/resolution/tracking — split by lifecycle)
 - Files covering multiple unrelated concepts
 - Leaky abstractions (client accessing system internals, private method calls across layers)
 - Duplicated code blocks (80%+ similar structure)
+- Repeated load/update boilerplate (find-by-id, mutate, write-back) — extract helper
+- Functions doing 5+ things — split so name reveals intent
 - Circular or wrong-direction imports
 
 **Cleanup**

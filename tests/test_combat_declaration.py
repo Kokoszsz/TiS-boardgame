@@ -7,6 +7,7 @@ from hexwar.core.actions import (
 )
 from hexwar.core.events import AttackDeclared, AttackUndeclared
 from hexwar.core.hex import HexCoord
+from hexwar.systems.wb48.combat_declaration import CombatSubPhase
 from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
@@ -32,7 +33,7 @@ class TestDeclarationBasic:
         ])
         _enter_combat_phase(engine)
         md = engine.state.metadata
-        assert md["combat_sub_phase"] == "declaration"
+        assert md["combat_sub_phase"] == CombatSubPhase.DECLARATION
         assert md["battles"] == []
         assert md["next_battle_id"] == 1
 

@@ -88,6 +88,21 @@ Before writing code, show design. Scale detail to change size.
 - Organized: stdlib, third-party, local. Each group alphabetized.
 - Remove unused imports immediately.
 
+## Refactor Rules (from audit)
+
+Active rules derived from codebase audit. Apply when writing new code or modifying existing.
+
+1. **No raw `str` for closed domains.** Use `Enum` or `NewType`. (T1 `Side`, T2 `CombatSubPhase`, T3 `BattleOutcome`, T4 `UnitId`/`BattleId`/`PlayerId` done)
+2. **No `getattr(obj, f"{var}_field")`.** Use enum + accessor method. (T1 done — `battle.debt(side)` not `getattr(battle, f"{side}_debt")`)
+3. **No per-side mirrored fields (`attacker_X` + `defender_X`).** Single `dict[Side, X]` or `by_side(side) -> X` method.
+4. **No multi-bool "exactly one true" invariants.** Single enum field. (T3 done — `BattleOutcome` replaced 3 bools)
+5. **No `dict[K, V]` reused in 2+ places without a name.** Wrap in class with intention-revealing methods. (T7 pending)
+6. **No `state.metadata[key]` outside one helper per concern.** Use typed slice. (T6 pending)
+7. **Repeated load/update boilerplate → extract helper.** (T5 `state.with_battle_updated` pending)
+8. **Functions that "do 5 things" get split** — name reveals intent better than comments. (T9/T10 pending)
+
+Pending items (T5-T10) tracked in `refactor_audit.md`. Apply opportunistically when touching related code.
+
 ## HexWar-Specific Patterns
 
 **Engine/System/Client separation:**

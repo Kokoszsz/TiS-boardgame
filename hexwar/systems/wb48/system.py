@@ -14,7 +14,7 @@ from hexwar.core.state import GameState
 from hexwar.core.unit import Player, UnitTypeDef
 from hexwar.systems.base import PhaseDef, System
 from hexwar.systems.wb48.combat_declaration import (
-    SUB_PHASE_DECLARATION, SUB_PHASE_RESOLUTION, DeclarationMixin,
+    CombatSubPhase, DeclarationMixin,
 )
 from hexwar.core.battle import PostBattlePhase
 from hexwar.systems.wb48.combat_resolution import ResolutionMixin
@@ -98,12 +98,12 @@ class WB48System(
 
         if DeclareAttackAction in phase.allowed_actions:
             combat_sub_phase = state.metadata.get("combat_sub_phase")
-            if combat_sub_phase == SUB_PHASE_DECLARATION:
+            if combat_sub_phase == CombatSubPhase.DECLARATION:
                 actions.extend(self._legal_declare_actions(state, player))
                 actions.extend(self._legal_undeclare_actions(state, player))
                 if state.metadata.get("declaration_complete", False):
                     actions.append(EndPhaseAction(player=player))
-            elif combat_sub_phase == SUB_PHASE_RESOLUTION:
+            elif combat_sub_phase == CombatSubPhase.RESOLUTION:
                 post_battle = self._find_active_post_battle(state)
                 if post_battle:
                     actions.extend(self._legal_post_battle_actions(state, player, post_battle))
@@ -192,11 +192,11 @@ class WB48System(
 
     def should_advance_phase(self, state: GameState) -> bool:
         combat_sub_phase = state.metadata.get("combat_sub_phase")
-        if combat_sub_phase == SUB_PHASE_DECLARATION:
+        if combat_sub_phase == CombatSubPhase.DECLARATION:
             battles = state.metadata.get("battles", [])
             if battles:
                 return False
-        if combat_sub_phase == SUB_PHASE_RESOLUTION:
+        if combat_sub_phase == CombatSubPhase.RESOLUTION:
             battles = state.metadata.get("battles", [])
             all_done = all(b.resolved and b.post_phase == PostBattlePhase.DONE for b in battles)
             if not all_done:

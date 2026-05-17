@@ -14,6 +14,7 @@ from hexwar.core.events import (
 )
 from hexwar.core.hex import HexCoord
 from hexwar.core.battle import PostBattlePhase
+from hexwar.systems.wb48.combat_declaration import CombatSubPhase
 from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
@@ -48,9 +49,9 @@ class TestResolutionTransition:
         do_actions(engine, DeclareAttackAction(
             player=PLAYER_A, attacker_ids=("a1",), defender_hexes=(HexCoord(2, 1),),
         ))
-        assert engine.state.metadata["combat_sub_phase"] == "declaration"
+        assert engine.state.metadata["combat_sub_phase"] == CombatSubPhase.DECLARATION
         do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        assert engine.state.metadata["combat_sub_phase"] == "resolution"
+        assert engine.state.metadata["combat_sub_phase"] == CombatSubPhase.RESOLUTION
 
     def test_no_battles_skips_resolution(self):
         engine = _setup_combat_phase([
@@ -757,7 +758,7 @@ class TestEncircledElimination:
             combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         new_state, events = engine._system._apply_retreat_split(
             state,
@@ -807,7 +808,7 @@ class TestEncircledElimination:
             },
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         new_state, _ = engine._system._apply_retreat_split(
             state,
@@ -854,7 +855,7 @@ class TestPursuitFullHexElimination:
             retreat_paths={"b1": (HexCoord(3, 1), HexCoord(4, 1))},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
@@ -888,7 +889,7 @@ class TestPursuitFullHexElimination:
             eliminated_at={"b1": HexCoord(2, 1), "b2": HexCoord(2, 1)},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
@@ -917,7 +918,7 @@ class TestPursuitTargets:
             retreat_paths={"b1": (HexCoord(3, 1), HexCoord(4, 1))},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
@@ -950,7 +951,7 @@ class TestPursuitTargets:
             eliminated_at={"b1": HexCoord(2, 1)},
         )
         state = state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuer_ids = {a.unit_id for a in legal if isinstance(a, PursuitAction)}
@@ -974,7 +975,7 @@ class TestPursuitTargets:
             eliminated_at={"b1": HexCoord(2, 1)},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         assert all(isinstance(a, SkipPursuitAction) for a in legal)
@@ -1002,7 +1003,7 @@ class TestPursuitTargets:
             retreat_paths={"b2": (HexCoord(2, 4),)},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
@@ -1033,7 +1034,7 @@ class TestPursuitTargets:
             eliminated_at={"b1": HexCoord(2, 1)},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
@@ -1063,7 +1064,7 @@ class TestPursuitTargets:
             units_pursued=("a1",),
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         pursuer_ids = {a.unit_id for a in legal if isinstance(a, PursuitAction)}
@@ -1087,7 +1088,7 @@ class TestPursuitTargets:
             eliminated_at={"b1": HexCoord(2, 1)},
         )
         state = engine.state.with_metadata("battles", [battle])
-        state = state.with_metadata("combat_sub_phase", "resolution")
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
 
         legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
         assert any(isinstance(a, SkipPursuitAction) for a in legal), \

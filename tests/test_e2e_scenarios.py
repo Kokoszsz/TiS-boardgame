@@ -260,7 +260,8 @@ class TestE2EMultiUnitPursuit:
         battle = engine.state.metadata["battles"][0]
 
         # If A won and B was eliminated, expect PURSUIT phase
-        if battle.result.victorious_attacker and engine.state.get_unit("B1") is None:
+        from hexwar.core.combat_results import BattleOutcome
+        if battle.result.outcome == BattleOutcome.ATTACKER_WIN and engine.state.get_unit("B1") is None:
             assert battle.post_phase == PostBattlePhase.PURSUIT
             legal = engine.get_legal_actions()
             pursuit_actions = [a for a in legal if isinstance(a, PursuitAction)]

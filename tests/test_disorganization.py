@@ -14,6 +14,7 @@ from hexwar.core.rng import GameRNG
 from hexwar.core.state import build_initial_state
 from hexwar.systems.wb48.combat_resolution import ResolutionMixin
 from hexwar.systems.wb48.crt import DISORG_THRESHOLD
+from hexwar.systems.wb48.combat_declaration import CombatSubPhase
 from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B, WB48System
 
 from tests.conftest import do_actions, make_engine, make_map, make_unit
@@ -81,7 +82,7 @@ class TestComputeDisorgRolls:
         ])
         battle = _make_battle(
             attacker_ids=("a1", "a2"),
-            result=CombatResult(attacker_deorganized_roll=True),
+            result=CombatResult(attacker_disorganized_roll=True),
         )
         rolls = ResolutionMixin()._compute_disorg_rolls(engine.state, battle)
         assert rolls == {"a1": 1, "a2": 1}
@@ -91,7 +92,7 @@ class TestComputeDisorgRolls:
             make_unit("a1"),
             make_unit("b1", player=PLAYER_B),
         ])
-        battle = _make_battle(result=CombatResult(defender_deorganized_roll=True))
+        battle = _make_battle(result=CombatResult(defender_disorganized_roll=True))
         rolls = ResolutionMixin()._compute_disorg_rolls(engine.state, battle)
         assert rolls == {"b1": 1}
 
@@ -151,7 +152,7 @@ class TestComputeDisorgRolls:
             make_unit("b1", player=PLAYER_B),
         ])
         battle = _make_battle(
-            result=CombatResult(defender_retreat=3, defender_deorganized_roll=True),
+            result=CombatResult(defender_retreat=3, defender_disorganized_roll=True),
             retreat_paths={"b1": (HexCoord(3, 1), HexCoord(4, 1), HexCoord(5, 1))},
         )
         rolls = ResolutionMixin()._compute_disorg_rolls(engine.state, battle)
@@ -166,7 +167,7 @@ class TestComputeDisorgRolls:
         ])
         battle = _make_battle(
             defender_ids=("b1", "b2"),
-            result=CombatResult(defender_deorganized_roll=True),
+            result=CombatResult(defender_disorganized_roll=True),
         )
         rolls = ResolutionMixin()._compute_disorg_rolls(engine.state, battle)
         assert rolls == {"b1": 1}
@@ -183,7 +184,7 @@ class TestComputeDisorgRolls:
         engine._state = engine.state.with_unit(b1.with_disorganized(True))
 
         battle = _make_battle(
-            result=CombatResult(defender_deorganized_roll=True),
+            result=CombatResult(defender_disorganized_roll=True),
         )
         rolls = ResolutionMixin()._compute_disorg_rolls(engine.state, battle)
         assert rolls == {}
@@ -205,7 +206,7 @@ class TestApplyResolveDisorgRolls:
         # Drop into combat_a resolution sub-phase with our battle.
         do_actions(engine, EndPhaseAction(player=PLAYER_A))  # move_a → combat_a
         engine._state = engine.state.with_metadata("battles", [battle])
-        engine._state = engine.state.with_metadata("combat_sub_phase", "resolution")
+        engine._state = engine.state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
         if b_disorg:
             b1 = engine.state.get_unit("b1")
             engine._state = engine.state.with_unit(b1.with_disorganized(True))
@@ -213,7 +214,7 @@ class TestApplyResolveDisorgRolls:
 
     def test_total_below_threshold_no_disorg(self):
         """2d6 = 9 < 10 threshold → no disorganization."""
-        battle = _make_battle(result=CombatResult(defender_deorganized_roll=True))
+        battle = _make_battle(result=CombatResult(defender_disorganized_roll=True))
         rng = SequenceRNG([4, 5])  # total 9
         engine = self._setup(battle, rng)
         events = engine.submit_action(
@@ -228,7 +229,7 @@ class TestApplyResolveDisorgRolls:
 
     def test_total_meets_threshold_disorganizes(self):
         """2d6 = 10 ≥ 10 threshold → disorganization."""
-        battle = _make_battle(result=CombatResult(defender_deorganized_roll=True))
+        battle = _make_battle(result=CombatResult(defender_disorganized_roll=True))
         rng = SequenceRNG([5, 5])  # total 10
         engine = self._setup(battle, rng)
         events = engine.submit_action(
@@ -275,7 +276,7 @@ class TestApplyResolveDisorgRolls:
 
     def test_threshold_constant(self):
         """DISORG_THRESHOLD propagates into event."""
-        battle = _make_battle(result=CombatResult(defender_deorganized_roll=True))
+        battle = _make_battle(result=CombatResult(defender_disorganized_roll=True))
         rng = SequenceRNG([1, 1])
         engine = self._setup(battle, rng)
         events = engine.submit_action(
@@ -329,7 +330,7 @@ class TestPhaseFlow:
         ])
         mixin = ResolutionMixin()
         battle = _make_battle(
-            result=CombatResult(defender_deorganized_roll=True),
+            result=CombatResult(defender_disorganized_roll=True),
             post_phase=PostBattlePhase.DISORG_ROLLS,
         )
         next_phase = mixin._skip_empty_phase(engine.state, battle)
@@ -337,7 +338,7 @@ class TestPhaseFlow:
 
     def test_initial_post_phase_star_only_routes_to_disorg(self):
         mixin = ResolutionMixin()
-        result = CombatResult(attacker_deorganized_roll=True)
+        result = CombatResult(attacker_disorganized_roll=True)
         assert mixin._initial_post_phase(result) == PostBattlePhase.DISORG_ROLLS
 
 

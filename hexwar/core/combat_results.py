@@ -1,7 +1,15 @@
 
 
 import re
+from enum import Enum
+
 from attr import dataclass
+
+
+class BattleOutcome(Enum):
+    ATTACKER_WIN = "attacker_win"
+    DEFENDER_WIN = "defender_win"
+    TIE = "tie"
 
 
 @dataclass(frozen=True)
@@ -10,13 +18,11 @@ class CombatResult:
     defender_casualties: int = 0
     attacker_retreat: int = 0
     defender_retreat: int = 0
-    attacker_deorganized: bool = False
-    defender_deorganized: bool = False
-    attacker_deorganized_roll: int = 0
-    defender_deorganized_roll: int = 0
-    victorious_attacker: bool = False
-    victorious_defender: bool = False
-    victorious_tie: bool = False
+    attacker_disorganized: bool = False
+    defender_disorganized: bool = False
+    attacker_disorganized_roll: int = 0
+    defender_disorganized_roll: int = 0
+    outcome: BattleOutcome = BattleOutcome.TIE
     ratio: str = ""
 
     @staticmethod
@@ -27,54 +33,51 @@ class CombatResult:
     def _match_retreat(part: str) -> int:
         match = re.search(r"[AB](\d+)", part)
         return int(match.group(1)) if match else 0
-    
+
     @staticmethod
-    def determine_victory(attacker_part: str, defender_part: str) -> tuple[bool, bool, bool]:
+    def determine_victory(attacker_part: str, defender_part: str) -> BattleOutcome:
         has_B_in_defender = "B" in defender_part
         has_A_in_attacker = "A" in attacker_part
-        victorious_attacker = has_B_in_defender and not has_A_in_attacker
-        victorious_defender = has_A_in_attacker and not has_B_in_defender
-        victorious_tie = not has_A_in_attacker and not has_B_in_defender
-        return victorious_attacker, victorious_defender, victorious_tie
+        if has_B_in_defender and not has_A_in_attacker:
+            return BattleOutcome.ATTACKER_WIN
+        if has_A_in_attacker and not has_B_in_defender:
+            return BattleOutcome.DEFENDER_WIN
+        return BattleOutcome.TIE
 
     @classmethod
     def from_string(cls, result_str: str, ratio: str) -> "CombatResult":
         """Parse result string like 'A2/-' or '-1/B3D'."""
         attacker, defender = result_str.split("/")
 
-        # Victory flags: mutually exclusive. If both sides show retreat markers,
-        # neither side is marked victorious. If neither side shows a retreat
-        # marker, mark the result as a tie.
-        victorious_attacker, victorious_defender, victorious_tie = cls.determine_victory(attacker, defender)
+        outcome = cls.determine_victory(attacker, defender)
 
         return cls(
             attacker_casualties=cls._match_casualties(attacker),
             defender_casualties=cls._match_casualties(defender),
             attacker_retreat=cls._match_retreat(attacker),
             defender_retreat=cls._match_retreat(defender),
-            attacker_deorganized="D" in attacker,
-            defender_deorganized="D" in defender,
-            attacker_deorganized_roll=1 if "*" in attacker else 0,
-            defender_deorganized_roll=1 if "*" in defender else 0,
-            victorious_attacker=victorious_attacker,
-            victorious_defender=victorious_defender,
-            victorious_tie=victorious_tie,
+            attacker_disorganized="D" in attacker,
+            defender_disorganized="D" in defender,
+            attacker_disorganized_roll=1 if "*" in attacker else 0,
+            defender_disorganized_roll=1 if "*" in defender else 0,
+            outcome=outcome,
             ratio=ratio,
         )
-    
+
     def __str__(self) -> str:
-        parts = []
-        victory_attacker_str = " (Attacker victorious)" if self.victorious_attacker else ""
-        victory_defender_str = " (Defender victorious)" if self.victorious_defender else ""
-        victory_tie_str = " (Tie)" if self.victorious_tie else ""
-        victory_text = victory_attacker_str + victory_defender_str + victory_tie_str
-        
+        outcome_labels = {
+            BattleOutcome.ATTACKER_WIN: " (Attacker victorious)",
+            BattleOutcome.DEFENDER_WIN: " (Defender victorious)",
+            BattleOutcome.TIE: " (Tie)",
+        }
+        victory_text = outcome_labels[self.outcome]
+
         attacker_parts = []
         defender_parts = []
-        if self.attacker_deorganized:
-            attacker_parts.append("D" if not self.attacker_deorganized_roll else "*")
-        if self.defender_deorganized:
-            defender_parts.append("D" if not self.defender_deorganized_roll else "*")
+        if self.attacker_disorganized:
+            attacker_parts.append("D" if not self.attacker_disorganized_roll else "*")
+        if self.defender_disorganized:
+            defender_parts.append("D" if not self.defender_disorganized_roll else "*")
         if self.attacker_retreat:
             attacker_parts.append(f"A{self.attacker_retreat}")
         if self.defender_retreat:
@@ -85,8 +88,3 @@ class CombatResult:
             defender_parts.append(f"-{self.defender_casualties}")
         parts = ["".join(attacker_parts), "".join(defender_parts)]
         return f"{victory_text} {'/'.join(parts) if parts else '-'} (Ratio: {self.ratio})"
-
-        
-
-
-    

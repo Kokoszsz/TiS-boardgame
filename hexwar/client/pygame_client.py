@@ -27,9 +27,8 @@ from hexwar.client.hex_render import (
     hex_to_pixel,
     pixel_to_hex,
 )
-from hexwar.systems.wb48.system import (
-    PLAYER_A, PLAYER_B, SUB_PHASE_DECLARATION, SUB_PHASE_RESOLUTION, WB48System,
-)
+from hexwar.systems.wb48.combat_declaration import CombatSubPhase
+from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B, WB48System
 from hexwar.client.ui import UIButton
 
 SCREEN_W = 1024
@@ -191,9 +190,9 @@ class PygameClient:
         if phase.phase_type in ("movement", "strategic_movement"):
             self._handle_movement_click(clicked, pos)
         elif phase.phase_type == "combat":
-            if sub_phase == SUB_PHASE_DECLARATION:
+            if sub_phase == CombatSubPhase.DECLARATION:
                 self._handle_declaration_click(clicked)
-            elif sub_phase == SUB_PHASE_RESOLUTION:
+            elif sub_phase == CombatSubPhase.RESOLUTION:
                 self._handle_resolution_click(clicked)
             else:
                 self._deselect()
@@ -333,10 +332,10 @@ class PygameClient:
     # ------------------------------------------------------------------
 
     def _in_declaration_mode(self) -> bool:
-        return self.engine.state.metadata.get("combat_sub_phase") == SUB_PHASE_DECLARATION
+        return self.engine.state.metadata.get("combat_sub_phase") == CombatSubPhase.DECLARATION
 
     def _in_resolution_mode(self) -> bool:
-        return self.engine.state.metadata.get("combat_sub_phase") == SUB_PHASE_RESOLUTION
+        return self.engine.state.metadata.get("combat_sub_phase") == CombatSubPhase.RESOLUTION
 
     def _handle_declaration_click(self, clicked: HexCoord) -> None:
         """Handle clicks during combat declaration sub-phase."""

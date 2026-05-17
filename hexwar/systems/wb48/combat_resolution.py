@@ -9,7 +9,7 @@ from hexwar.core.battle import (
     Battle, PostBattlePhase, Side, cpl_phase_for, retreat_phase_for,
     side_of_phase, split_phase_for,
 )
-from hexwar.core.combat_results import CombatResult
+from hexwar.core.combat_results import BattleOutcome, CombatResult
 from hexwar.core.events import (
     BattleResolved, DisorganizationRolled, Event, RetreatSplitChosen,
     UnitDisorganized, UnitLostCpl, UnitPursued, UnitRetreated,
@@ -18,7 +18,7 @@ from hexwar.core.hex import HexCoord
 from hexwar.core.rng import GameRNG
 from hexwar.core.state import GameState
 from hexwar.core.unit import BattleId, Player, UnitId
-from hexwar.systems.wb48.combat_declaration import SUB_PHASE_DECLARATION, SUB_PHASE_RESOLUTION
+from hexwar.systems.wb48.combat_declaration import CombatSubPhase
 from hexwar.systems.wb48.crt import DISORG_THRESHOLD, lookup_crt
 
 
@@ -29,8 +29,8 @@ class ResolutionMixin:
     ) -> tuple[GameState, list[Event]]:
         """Transitions from declaration to resolution sub-phase."""
         combat_sub_phase = state.metadata.get("combat_sub_phase")
-        if combat_sub_phase == SUB_PHASE_DECLARATION:
-            state = state.with_metadata("combat_sub_phase", SUB_PHASE_RESOLUTION)
+        if combat_sub_phase == CombatSubPhase.DECLARATION:
+            state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
         return state, []
 
     def _legal_resolve_actions(self, state: GameState, player: Player) -> list[ResolveBattleAction]:
@@ -77,17 +77,17 @@ class ResolutionMixin:
         # Apply immediate disorganization (D flag)
         immediate_disorg_events: list[Event] = []
         _deorganize_units = []
-        if combat_result.attacker_deorganized:
+        if combat_result.attacker_disorganized:
             _deorganize_units.extend(attacker_ids)
-        if combat_result.defender_deorganized:
+        if combat_result.defender_disorganized:
             _deorganize_units.extend(defender_ids)
         for uid in _deorganize_units:
             state, evs = self._deorganize_unit(state, uid, action.battle_id)
             immediate_disorg_events.extend(evs)
 
-        if combat_result.victorious_attacker:
+        if combat_result.outcome == BattleOutcome.ATTACKER_WIN:
             pursuing_side: Side | None = Side.ATTACKER
-        elif combat_result.victorious_defender:
+        elif combat_result.outcome == BattleOutcome.DEFENDER_WIN:
             pursuing_side = Side.DEFENDER
         else:
             pursuing_side = None
@@ -151,8 +151,8 @@ class ResolutionMixin:
         result = battle.result
         rolls: dict[UnitId, int] = {}
         for unit_ids, star_flag in [
-            (battle.attacker_ids, result.attacker_deorganized_roll),
-            (battle.defender_ids, result.defender_deorganized_roll),
+            (battle.attacker_ids, result.attacker_disorganized_roll),
+            (battle.defender_ids, result.defender_disorganized_roll),
         ]:
             for uid in unit_ids:
                 unit = state.get_unit(uid)
@@ -223,7 +223,7 @@ class ResolutionMixin:
             return PostBattlePhase.DEFENDER_SPLIT
         if result.attacker_casualties > 0 or result.defender_casualties > 0:
             return PostBattlePhase.MANDATORY_CPL
-        if result.attacker_deorganized_roll or result.defender_deorganized_roll:
+        if result.attacker_disorganized_roll or result.defender_disorganized_roll:
             return PostBattlePhase.DISORG_ROLLS
         return PostBattlePhase.DONE
 
