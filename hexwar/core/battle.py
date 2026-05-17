@@ -100,6 +100,11 @@ class Battle:
     def mandatory_cpl(self, side: Side) -> int:
         return self.attacker_mandatory_cpl if side is Side.ATTACKER else self.defender_mandatory_cpl
 
+    def with_debt(self, side: Side, n: int) -> Battle:
+        if side is Side.ATTACKER:
+            return self.replace(attacker_debt=n)
+        return self.replace(defender_debt=n)
+
     def with_mandatory_cpl(self, side: Side, n: int) -> Battle:
         if side is Side.ATTACKER:
             return self.replace(attacker_mandatory_cpl=n)

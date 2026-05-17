@@ -76,13 +76,13 @@ class ResolutionMixin:
 
         # Apply immediate disorganization (D flag)
         immediate_disorg_events: list[Event] = []
-        _deorganize_units = []
+        _disorganize_units = []
         if combat_result.attacker_disorganized:
-            _deorganize_units.extend(attacker_ids)
+            _disorganize_units.extend(attacker_ids)
         if combat_result.defender_disorganized:
-            _deorganize_units.extend(defender_ids)
-        for uid in _deorganize_units:
-            state, evs = self._deorganize_unit(state, uid, action.battle_id)
+            _disorganize_units.extend(defender_ids)
+        for uid in _disorganize_units:
+            state, evs = self._disorganize_unit(state, uid, action.battle_id)
             immediate_disorg_events.extend(evs)
 
         if combat_result.outcome == BattleOutcome.ATTACKER_WIN:
@@ -125,7 +125,7 @@ class ResolutionMixin:
     # Post-battle resolution
     # ------------------------------------------------------------------
 
-    def _deorganize_unit(
+    def _disorganize_unit(
         self, state: GameState, unit_id: UnitId, battle_id: BattleId,
     ) -> tuple[GameState, list[Event]]:
         """Mark unit as disorganized. Return event for UI."""
@@ -277,15 +277,14 @@ class ResolutionMixin:
     ) -> list[AssignCplLossAction]:
         """Return one AssignCplLossAction per eligible unit that can die."""
         post_phase = battle.post_phase
-        if post_phase == PostBattlePhase.ATTACKER_CPL:
-            unit_ids = battle.attacker_ids
-        elif post_phase == PostBattlePhase.DEFENDER_CPL:
-            unit_ids = battle.defender_ids
+        side = side_of_phase(post_phase)
+        if side is not None:
+            unit_ids = battle.units(side)
         elif post_phase == PostBattlePhase.MANDATORY_CPL:
-            if battle.attacker_mandatory_cpl > 0:
-                unit_ids = battle.attacker_ids
+            if battle.mandatory_cpl(Side.ATTACKER) > 0:
+                unit_ids = battle.units(Side.ATTACKER)
             else:
-                unit_ids = battle.defender_ids
+                unit_ids = battle.units(Side.DEFENDER)
         else:
             return []
 

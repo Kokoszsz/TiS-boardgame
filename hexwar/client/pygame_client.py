@@ -15,7 +15,7 @@ from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
 from hexwar.core.rng import GameRNG
 from hexwar.core.state import GameState, build_initial_state
-from hexwar.core.unit import Unit
+from hexwar.core.unit import BattleId, Unit, UnitId
 from hexwar.client.hex_render import (
     HEX_SIZE,
     PLAYER_COLORS,
@@ -76,7 +76,7 @@ class PygameClient:
         self.font_small = pygame.font.SysFont("consolas", 12)
 
         self.camera_offset = (SCREEN_W / 2 - 100, (SCREEN_H - UI_HEIGHT) / 2 - 50)
-        self.selected_unit_id: str | None = None
+        self.selected_unit_id: UnitId | None = None
         self.legal_moves: set[HexCoord] = set()
         self.enemy_zoc: set[HexCoord] = set()
         self.event_log: list[str] = []
@@ -93,15 +93,15 @@ class PygameClient:
         self.can_declare_sm = False
 
         # Combat declaration UI state
-        self.selected_attackers: list[str] = []
-        self.selected_battle_id: int | None = None
+        self.selected_attackers: list[UnitId] = []
+        self.selected_battle_id: BattleId | None = None
 
         # Post-battle UI state
         self.retreat_split_open = False
         self.retreat_split_options: list[ChooseRetreatSplitAction] = []
         self.retreat_split_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
         self.retreat_split_rects: list[pygame.Rect] = []
-        self.post_battle_selected_unit: str | None = None
+        self.post_battle_selected_unit: UnitId | None = None
 
         # Disorganization roll results panel
         self.disorg_panel_open = False
