@@ -3,13 +3,14 @@ from __future__ import annotations
 import pygame
 
 from hexwar.core.actions import (
-    AssignCplLossAction, ChooseRetreatSplitAction,
+    AssignCplLossAction, ChooseRetreatSplitAction, ResolveDisorgRollsAction,
     DeclareAttackAction, DeclareStrategicMovementAction, EndPhaseAction,
     EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
     RetreatUnitAction, SkipPursuitAction, StrategicMoveAction, UndeclareAttackAction,
 )
 from hexwar.core.battle import PostBattlePhase
 from hexwar.core.engine import Engine
+from hexwar.core.events import DisorganizationRolled
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
 from hexwar.core.rng import GameRNG
@@ -57,6 +58,7 @@ BORDER_PARTIAL_MP = (220, 200, 50)
 BORDER_EXHAUSTED = (200, 60, 60)
 BORDER_NEUTRAL = (200, 200, 200)
 SM_TAG_COLOR = (100, 180, 255)
+DISORG_TAG_COLOR = (255, 80, 80)
 
 BTN_Y = SCREEN_H - UI_HEIGHT + 20
 BTN_H = 40
@@ -101,6 +103,12 @@ class PygameClient:
         self.retreat_split_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
         self.retreat_split_rects: list[pygame.Rect] = []
         self.post_battle_selected_unit: str | None = None
+
+        # Disorganization roll results panel
+        self.disorg_panel_open = False
+        self.disorg_panel_rolls: list[DisorganizationRolled] = []
+        self.disorg_panel_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self.disorg_panel_ok_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
 
         self.buttons: list[UIButton] = []
         self._build_buttons()
@@ -153,6 +161,9 @@ class PygameClient:
         pygame.quit()
 
     def _handle_left_click(self, pos: tuple[int, int]) -> None:
+        if self.disorg_panel_open:
+            self._handle_disorg_panel_click(pos)
+            return
         if self.unit_picker_open:
             self._handle_picker_click(pos)
             return
@@ -645,6 +656,69 @@ class PygameClient:
         if not self.retreat_split_rect.collidepoint(pos):
             self.retreat_split_open = False
 
+    def _open_disorg_panel(self, rolls: list[DisorganizationRolled]) -> None:
+        self.disorg_panel_open = True
+        self.disorg_panel_rolls = rolls
+        panel_w = 380
+        row_h = 22
+        header_h = 30
+        ok_h = 36
+        panel_h = header_h + len(rolls) * row_h + ok_h + 20
+        panel_x = SCREEN_W // 2 - panel_w // 2
+        panel_y = (SCREEN_H - UI_HEIGHT) // 2 - panel_h // 2
+        self.disorg_panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        ok_w = 80
+        self.disorg_panel_ok_rect = pygame.Rect(
+            panel_x + (panel_w - ok_w) // 2,
+            panel_y + panel_h - ok_h - 8,
+            ok_w, ok_h,
+        )
+
+    def _handle_disorg_panel_click(self, pos: tuple[int, int]) -> None:
+        if self.disorg_panel_ok_rect.collidepoint(pos):
+            self.disorg_panel_open = False
+            self.disorg_panel_rolls = []
+
+    def _draw_disorg_panel(self) -> None:
+        rect = self.disorg_panel_rect
+        panel_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        panel_surf.fill(PANEL_BG)
+        self.screen.blit(panel_surf, rect.topleft)
+        pygame.draw.rect(self.screen, PANEL_BORDER, rect, 1)
+
+        title = self.font_big.render("Disorganization rolls", True, TEXT_COLOR)
+        self.screen.blit(title, (rect.x + 12, rect.y + 8))
+
+        state = self.engine.state
+        row_h = 22
+        y = rect.y + 38
+        for roll in self.disorg_panel_rolls:
+            unit = state.get_unit(roll.unit_id)
+            name = unit.name if unit else roll.unit_id
+            outcome = "DISORG" if roll.became_disorganized else "OK"
+            color = DISORG_TAG_COLOR if roll.became_disorganized else (180, 200, 180)
+            line = (
+                f"{name}: {roll.dice[0]}+{roll.dice[1]}={roll.total} "
+                f"vs {roll.threshold} → {outcome}"
+            )
+            text = self.font_small.render(line, True, color)
+            self.screen.blit(text, (rect.x + 14, y))
+            y += row_h
+
+        mouse_pos = pygame.mouse.get_pos()
+        hovered = self.disorg_panel_ok_rect.collidepoint(mouse_pos)
+        ok_bg = PANEL_ITEM_HOVER if hovered else PANEL_ITEM_BG
+        pygame.draw.rect(self.screen, ok_bg, self.disorg_panel_ok_rect)
+        pygame.draw.rect(self.screen, PANEL_BORDER, self.disorg_panel_ok_rect, 1)
+        ok_text = self.font.render("OK", True, TEXT_COLOR)
+        self.screen.blit(
+            ok_text,
+            (
+                self.disorg_panel_ok_rect.centerx - ok_text.get_width() // 2,
+                self.disorg_panel_ok_rect.centery - ok_text.get_height() // 2,
+            ),
+        )
+
     def _do_skip_pursuit(self) -> None:
         """Skip pursuit for active battle."""
         battle = self._get_active_post_battle()
@@ -813,6 +887,24 @@ class PygameClient:
                 self._open_retreat_split()
         elif self.retreat_split_open:
             self.retreat_split_open = False
+        # Auto-roll disorganization rolls (no player decision per rule 7.32),
+        # but show results in modal panel so player sees what happened.
+        if (
+            battle
+            and battle.post_phase == PostBattlePhase.DISORG_ROLLS
+            and not self.disorg_panel_open
+        ):
+            player = self.engine.state.active_player
+            events = self.engine.submit_action(
+                ResolveDisorgRollsAction(player=player, battle_id=battle.id)
+            )
+            rolls = [e for e in events if isinstance(e, DisorganizationRolled)]
+            for e in events:
+                self.event_log.append(str(e))
+            if rolls:
+                self._open_disorg_panel(rolls)
+        if self.disorg_panel_open:
+            self._draw_disorg_panel()
         pygame.display.flip()
 
     def _draw_unit_picker(self) -> None:
@@ -836,11 +928,15 @@ class PygameClient:
             pygame.draw.circle(self.screen, color, (rect.x + 14, rect.centery), 8)
 
             mp_left = unit.movement_left
-            suffix = "  [ATK]" if is_committed else ""
-            info = f"{unit.name}  MP:{mp_left}{suffix}"
+            atk_suffix = "  [ATK]" if is_committed else ""
+            info = f"{unit.name}  MP:{mp_left}{atk_suffix}"
             text_color = (120, 120, 120) if is_committed else TEXT_COLOR
             text = self.font_small.render(info, True, text_color)
-            self.screen.blit(text, (rect.x + 28, rect.centery - text.get_height() // 2))
+            text_y = rect.centery - text.get_height() // 2
+            self.screen.blit(text, (rect.x + 28, text_y))
+            if unit.disorganized:
+                d_text = self.font_small.render("  [D]", True, DISORG_TAG_COLOR)
+                self.screen.blit(d_text, (rect.x + 28 + text.get_width(), text_y))
 
     def _draw_retreat_split_panel(self) -> None:
         """Draw retreat/loss split choice panel."""
@@ -1040,6 +1136,10 @@ class PygameClient:
                 if unit.strategic_movement:
                     sm_text = self.font_small.render("SM", True, SM_TAG_COLOR)
                     self.screen.blit(sm_text, (int(sx) - 14, int(sy) - 24))
+
+                if unit.disorganized:
+                    d_text = self.font_big.render("D", True, DISORG_TAG_COLOR)
+                    self.screen.blit(d_text, (int(sx) + 8, int(sy) - 24))
 
             entrenched = state.metadata.get("entrenched", {})
             if coord in entrenched:

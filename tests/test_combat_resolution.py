@@ -894,3 +894,203 @@ class TestPursuitFullHexElimination:
         pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
         assert HexCoord(2, 1) in pursuit_targets, \
             "7.57: fully-eliminated hex must be pursuable"
+
+
+class TestPursuitTargets:
+    """Coverage tests for `_legal_pursuit_actions` target-hex computation."""
+
+    def test_intermediate_retreat_path_hex_pursuable(self):
+        """Multi-step retreat: intermediate hex is pursuable, final hex (retreater) is not."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("b1", q=4, r=1, player=PLAYER_B, strength=1),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="attacker",
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+            retreat_paths={"b1": (HexCoord(3, 1), HexCoord(4, 1))},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
+        assert HexCoord(2, 1) in pursuit_targets, "origin hex must be pursuable"
+        assert HexCoord(3, 1) in pursuit_targets, "intermediate retreat hex must be pursuable"
+        assert HexCoord(4, 1) not in pursuit_targets, \
+            "final retreat hex has retreater on it — not pursuable"
+
+    def test_disorganized_pursuer_skipped(self):
+        """Rule 14.3: disorganized units cannot pursue."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("a2", q=1, r=1, strength=3, stack_size=1),
+        ], seed=42)
+        # Mark a1 disorganized
+        a1 = engine.state.get_unit("a1")
+        state = engine.state.with_unit(a1.with_disorganized(True))
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1", "a2"),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="attacker",
+            combatant_origin={
+                "a1": HexCoord(1, 1), "a2": HexCoord(1, 1),
+                "b1": HexCoord(2, 1),
+            },
+            eliminated_at={"b1": HexCoord(2, 1)},
+        )
+        state = state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        pursuer_ids = {a.unit_id for a in legal if isinstance(a, PursuitAction)}
+        assert "a1" not in pursuer_ids, "disorganized a1 must not generate pursuit actions"
+        assert "a2" in pursuer_ids, "organized a2 must generate pursuit actions"
+
+    def test_empty_pursuing_side_yields_only_skip(self):
+        """Mutual destruction / no winner: pursuing_side='' → only SkipPursuitAction."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="",
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+            eliminated_at={"b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        assert all(isinstance(a, SkipPursuitAction) for a in legal)
+        assert len(legal) == 1
+
+    def test_multi_hex_battle_neighbor_bonus_only_on_cleared_hex(self):
+        """Battle vs 2 defender hexes: 7.57 neighbor bonus only around fully-cleared one."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1), HexCoord(2, 3)),
+            defender_ids=("b1", "b2"),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="attacker",
+            combatant_origin={
+                "a1": HexCoord(1, 1),
+                "b1": HexCoord(2, 1),  # killed
+                "b2": HexCoord(2, 3),  # retreated
+            },
+            eliminated_at={"b1": HexCoord(2, 1)},
+            retreat_paths={"b2": (HexCoord(2, 4),)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
+        # (2,1) fully cleared → neighbor bonus applies. (2,0) is a neighbor.
+        assert HexCoord(2, 0) in pursuit_targets, \
+            "7.57 neighbor of fully-cleared hex must be pursuable"
+        # (2,3) NOT cleared (b2 retreated, still alive) → no neighbor bonus.
+        # (1,3) is neighbor of (2,3) only (not of (2,1)), not on retreat path.
+        assert HexCoord(1, 3) not in pursuit_targets, \
+            "neighbor of partially-cleared hex must NOT be pursuable"
+
+    def test_hex_with_enemy_unit_filtered_per_unit(self):
+        """Target hex containing enemy unit not yielded for pursuit actions."""
+        # b3 sits on a neighbor of fully-cleared (2,1). Pursuit may not enter.
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("b3", q=2, r=0, player=PLAYER_B, strength=1),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="attacker",
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+            eliminated_at={"b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        pursuit_targets = {a.target for a in legal if isinstance(a, PursuitAction)}
+        assert HexCoord(2, 0) not in pursuit_targets, \
+            "hex with enemy unit must not be pursuable"
+        assert HexCoord(2, 1) in pursuit_targets, "cleared hex still pursuable"
+
+    def test_units_already_pursued_filtered(self):
+        """Units in `units_pursued` produce no further pursuit actions."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("a2", q=1, r=1, strength=3, stack_size=1),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1", "a2"),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="attacker",
+            combatant_origin={
+                "a1": HexCoord(1, 1), "a2": HexCoord(1, 1),
+                "b1": HexCoord(2, 1),
+            },
+            eliminated_at={"b1": HexCoord(2, 1)},
+            units_pursued=("a1",),
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        pursuer_ids = {a.unit_id for a in legal if isinstance(a, PursuitAction)}
+        assert "a1" not in pursuer_ids, "already-pursued a1 must produce no actions"
+        assert "a2" in pursuer_ids
+
+    def test_skip_pursuit_always_available(self):
+        """SkipPursuitAction always present, even when valid pursuit moves exist."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.PURSUIT,
+            pursuing_side="attacker",
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+            eliminated_at={"b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", "resolution")
+
+        legal = engine._system._legal_pursuit_actions(state, PLAYER_A, battle)
+        assert any(isinstance(a, SkipPursuitAction) for a in legal), \
+            "SkipPursuitAction must always be offered"
+        assert any(isinstance(a, PursuitAction) for a in legal), \
+            "pursuit actions present alongside skip"

@@ -12,6 +12,10 @@ Result format: "attacker_result/defender_result"
 from __future__ import annotations
 from hexwar.core.combat_results import CombatResult
 
+# Disorganization: 2d6 >= threshold → unit becomes disorganized.
+# TODO: per-nation/per-unit-type thresholds (currently flat for all units).
+DISORG_THRESHOLD = 10
+
 RATIOS = [
     "1:4", "1:3", "1:2", "1:1",
     "2:1", "3:1", "4:1", "5:1", "6:1", "7:1", "8:1", "9:1", "10:1",
@@ -200,6 +204,7 @@ def strength_to_ratio(atk: int, def_: int) -> str:
 def lookup_crt(atk_strength: int, def_strength: int, dice_total: int) -> CombatResult:
     """Look up CRT result. Returns result string like 'A2/-' or '-1/B3D'."""
     ratio = strength_to_ratio(atk_strength, def_strength)
-    combat_result_str = CRT.get((dice_total, ratio))
+    #combat_result_str = CRT.get((dice_total, ratio))
+    combat_result_str = "D/-"  # TODO: temp hardcode for testing
     print(dice_total, ratio, "→", combat_result_str)
-    return CombatResult.from_string(combat_result_str, ratio=ratio) 
+    return CombatResult.from_string(combat_result_str, ratio=ratio)

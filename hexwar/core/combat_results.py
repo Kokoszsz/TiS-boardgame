@@ -12,8 +12,8 @@ class CombatResult:
     defender_retreat: int = 0
     attacker_deorganized: bool = False
     defender_deorganized: bool = False
-    attacker_deorganized_roll: bool = False
-    defender_deorganized_roll: bool = False
+    attacker_deorganized_roll: int = 0
+    defender_deorganized_roll: int = 0
     victorious_attacker: bool = False
     victorious_defender: bool = False
     victorious_tie: bool = False
@@ -54,8 +54,8 @@ class CombatResult:
             defender_retreat=cls._match_retreat(defender),
             attacker_deorganized="D" in attacker,
             defender_deorganized="D" in defender,
-            attacker_deorganized_roll="*" in attacker,
-            defender_deorganized_roll="*" in defender,
+            attacker_deorganized_roll=1 if "*" in attacker else 0,
+            defender_deorganized_roll=1 if "*" in defender else 0,
             victorious_attacker=victorious_attacker,
             victorious_defender=victorious_defender,
             victorious_tie=victorious_tie,

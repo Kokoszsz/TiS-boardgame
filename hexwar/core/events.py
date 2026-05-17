@@ -121,6 +121,16 @@ class UnitDisorganized(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class DisorganizationRolled(Event):
+    unit_id: UnitId
+    battle_id: int
+    dice: tuple[int, int]
+    total: int
+    threshold: int
+    became_disorganized: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SMTagToggled(Event):
     unit_id: UnitId
     tagged: bool

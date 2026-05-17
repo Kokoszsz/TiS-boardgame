@@ -4,7 +4,8 @@ from hexwar.core.actions import (
     Action, AssignCplLossAction, ChooseRetreatSplitAction,
     DeclareAttackAction, DeclareStrategicMovementAction, EndPhaseAction,
     EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
-    RetreatUnitAction, SkipPursuitAction, StrategicMoveAction, UndeclareAttackAction,
+    ResolveDisorgRollsAction, RetreatUnitAction, SkipPursuitAction,
+    StrategicMoveAction, UndeclareAttackAction,
 )
 from hexwar.core.events import Event
 from hexwar.core.map import TerrainType
@@ -144,6 +145,8 @@ class WB48System(
             return self._apply_assign_cpl_loss(state, action)
         if isinstance(action, RetreatUnitAction):
             return self._apply_retreat_unit(state, action)
+        if isinstance(action, ResolveDisorgRollsAction):
+            return self._apply_resolve_disorg_rolls(state, action, rng)
         if isinstance(action, PursuitAction):
             return self._apply_pursuit(state, action)
         if isinstance(action, SkipPursuitAction):

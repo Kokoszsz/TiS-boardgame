@@ -82,6 +82,12 @@ class SkipPursuitAction(Action):
 
 
 @dataclass(frozen=True, slots=True)
+class ResolveDisorgRollsAction(Action):
+    """Trigger auto-resolution of all owed disorganization rolls for a battle."""
+    battle_id: int
+
+
+@dataclass(frozen=True, slots=True)
 class DeclareStrategicMovementAction(Action):
     unit_id: UnitId
 

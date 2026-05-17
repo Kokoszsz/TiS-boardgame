@@ -3,12 +3,12 @@ from __future__ import annotations
 from hexwar.core.actions import (
     Action, AssignCplLossAction, ChooseRetreatSplitAction,
     EndPhaseAction, PursuitAction, ResolveBattleAction,
-    RetreatUnitAction, SkipPursuitAction,
+    ResolveDisorgRollsAction, RetreatUnitAction, SkipPursuitAction,
 )
 from hexwar.core.battle import Battle, PostBattlePhase
 from hexwar.core.combat_results import CombatResult
 from hexwar.core.events import (
-    BattleResolved, Event, RetreatSplitChosen,
+    BattleResolved, DisorganizationRolled, Event, RetreatSplitChosen,
     UnitDisorganized, UnitLostCpl, UnitPursued, UnitRetreated,
 )
 from hexwar.core.hex import HexCoord
@@ -16,7 +16,7 @@ from hexwar.core.rng import GameRNG
 from hexwar.core.state import GameState
 from hexwar.core.unit import Player
 from hexwar.systems.wb48.combat_declaration import SUB_PHASE_DECLARATION, SUB_PHASE_RESOLUTION
-from hexwar.systems.wb48.crt import lookup_crt
+from hexwar.systems.wb48.crt import DISORG_THRESHOLD, lookup_crt
 
 
 class ResolutionMixin:
@@ -72,13 +72,15 @@ class ResolutionMixin:
         combat_result = lookup_crt(atk_str, def_str, dice_total)
 
         # Apply immediate disorganization (D flag)
+        immediate_disorg_events: list[Event] = []
         _deorganize_units = []
         if combat_result.attacker_deorganized:
             _deorganize_units.extend(attacker_ids)
         if combat_result.defender_deorganized:
             _deorganize_units.extend(defender_ids)
         for uid in _deorganize_units:
-            state, _ = self._deorganize_unit(state, uid)
+            state, evs = self._deorganize_unit(state, uid, action.battle_id)
+            immediate_disorg_events.extend(evs)
 
         if combat_result.victorious_attacker:
             pursuing_side = "attacker"
@@ -114,21 +116,102 @@ class ResolutionMixin:
             dice_total=dice_total,
             result=combat_result,
         )
-        return state, [event]
+        return state, [event] + immediate_disorg_events
 
     # ------------------------------------------------------------------
     # Post-battle resolution
     # ------------------------------------------------------------------
 
-    def _deorganize_unit(self, state: GameState, unit_id: str) -> tuple[GameState, list[Event]]:
+    def _deorganize_unit(
+        self, state: GameState, unit_id: str, battle_id: int,
+    ) -> tuple[GameState, list[Event]]:
         """Mark unit as disorganized. Return event for UI."""
         unit = state.get_unit(unit_id)
         if not unit or unit.disorganized:
             return state, []
         updated_unit = unit.with_disorganized(True)
         state = state.with_unit(updated_unit)
-        event = UnitDisorganized(unit_id=unit_id)
+        event = UnitDisorganized(unit_id=unit_id, battle_id=battle_id)
         return state, [event]
+
+    def _compute_disorg_rolls(
+        self, state: GameState, battle: Battle,
+    ) -> dict[str, int]:
+        """Per-unit rolls owed. Skips dead and already-disorganized units.
+
+        Sources (stack per unit):
+          - '*' flag on side: +1 roll for every surviving participant
+          - actual retreat hexes: 2 → +1, 3 → +2, 4-5 → +3 (rule 7.32)
+        """
+        if not battle.result:
+            return {}
+        result = battle.result
+        rolls: dict[str, int] = {}
+        for unit_ids, star_flag in [
+            (battle.attacker_ids, result.attacker_deorganized_roll),
+            (battle.defender_ids, result.defender_deorganized_roll),
+        ]:
+            for uid in unit_ids:
+                unit = state.get_unit(uid)
+                if unit is None or unit.disorganized:
+                    continue
+                n = 0
+                if star_flag:
+                    n += 1
+                actual = len(battle.retreat_paths.get(uid, ()))
+                if actual == 2:
+                    n += 1
+                elif actual == 3:
+                    n += 2
+                elif actual >= 4:
+                    n += 3
+                if n > 0:
+                    rolls[uid] = n
+        return rolls
+
+    def _legal_disorg_actions(
+        self, state: GameState, player: Player, battle: Battle,
+    ) -> list[ResolveDisorgRollsAction]:
+        return [ResolveDisorgRollsAction(player=player, battle_id=battle.id)]
+
+    def _apply_resolve_disorg_rolls(
+        self, state: GameState, action: ResolveDisorgRollsAction, rng: GameRNG,
+    ) -> tuple[GameState, list[Event]]:
+        """Auto-resolve all disorganization rolls owed for a battle.
+
+        Rolls 2d6 per owed roll. >= DISORG_THRESHOLD → unit becomes
+        disorganized; subsequent rolls for that unit skipped.
+        """
+        battles: list[Battle] = list(state.metadata.get("battles", []))
+        battle_idx = next(i for i, b in enumerate(battles) if b.id == action.battle_id)
+        battle = battles[battle_idx]
+
+        rolls_owed = self._compute_disorg_rolls(state, battle)
+        events: list[Event] = []
+
+        for uid, n in rolls_owed.items():
+            for _ in range(n):
+                dice = rng.roll_dice(2, 6)
+                total = dice[0] + dice[1]
+                failed = total >= DISORG_THRESHOLD
+                events.append(DisorganizationRolled(
+                    unit_id=uid, battle_id=battle.id,
+                    dice=(dice[0], dice[1]), total=total,
+                    threshold=DISORG_THRESHOLD,
+                    became_disorganized=failed,
+                ))
+                if failed:
+                    unit = state.get_unit(uid)
+                    if unit and not unit.disorganized:
+                        state = state.with_unit(unit.with_disorganized(True))
+                        events.append(UnitDisorganized(unit_id=uid, battle_id=battle.id))
+                    break
+
+        updated = battle.replace(post_phase=PostBattlePhase.PURSUIT)
+        updated = updated.replace(post_phase=self._skip_empty_phase(state, updated))
+        battles[battle_idx] = updated
+        state = state.with_metadata("battles", battles)
+        return state, events
 
     def _initial_post_phase(self, result: CombatResult) -> PostBattlePhase:
         if result.attacker_retreat > 0:
@@ -161,6 +244,8 @@ class ResolutionMixin:
             return self._legal_assign_cpl_actions(state, player, battle)
         if post_phase in (PostBattlePhase.ATTACKER_RETREAT, PostBattlePhase.DEFENDER_RETREAT):
             return self._legal_retreat_actions(state, player, battle)
+        if post_phase == PostBattlePhase.DISORG_ROLLS:
+            return self._legal_disorg_actions(state, player, battle)
         if post_phase == PostBattlePhase.PURSUIT:
             return self._legal_pursuit_actions(state, player, battle)
         return []
@@ -291,13 +376,10 @@ class ResolutionMixin:
         else:
             pursuer_ids = battle.defender_ids
 
-        # Target hexes: retreat path hexes + vacated retreater origins + fully-cleared hexes.
-        # Rule 7.57: pursuit may enter an enemy hex AND a neighbor only if ALL its
-        # original occupants were eliminated (partially-retreated hexes are not "+neighbor"
-        # pursuable, but the vacated origin hex itself can still be followed into).
+
+        # Target hexes: retreat path hexes (follow retreater) + 7.57 neighbor bonus
+        # only on fully-eliminated origin hexes.
         target_hexes: set[HexCoord] = set()
-        for path in battle.retreat_paths.values():
-            target_hexes.update(path)
 
         loser_ids = battle.defender_ids if battle.pursuing_side == "attacker" else battle.attacker_ids
         hex_to_originals: dict[HexCoord, list[str]] = {}
@@ -306,19 +388,24 @@ class ResolutionMixin:
             if origin is not None:
                 hex_to_originals.setdefault(origin, []).append(uid)
 
+        # Follow-retreater pursuit: origin hex + intermediate path hexes (skip final
+        # position, where retreater still sits with enemy units).
+        for origin_hex in hex_to_originals:
+            target_hexes.add(origin_hex)
+        for path in battle.retreat_paths.values():
+            for hex_ in path[:-1]:
+                target_hexes.add(hex_)
+
+        # Rule 7.57: when ALL originals on a hex were eliminated and no enemy
+        # remains there, pursuit may also enter neighbors of that hex.
         for origin_hex, originals in hex_to_originals.items():
             all_eliminated = all(uid in battle.eliminated_at for uid in originals)
-            any_retreated = any(uid in battle.retreat_paths for uid in originals)
-            if all_eliminated:
-                # 7.57: fully-eliminated hex pursuable, plus neighbors
-                target_hexes.add(origin_hex)
+            enemy_remaining_units_on_hex = state.units_at(origin_hex)
+            if all_eliminated and not any(u for u in enemy_remaining_units_on_hex if u.player != player):
                 for nb in origin_hex.neighbors():
                     if nb in state.hex_map.all_coords() and state.hex_map.is_passable(nb):
                         target_hexes.add(nb)
-            elif any_retreated:
-                # Some retreated, some may have died — vacated origin still pursuable
-                # (follow the retreater into their old position), but no neighbor bonus.
-                target_hexes.add(origin_hex)
+
 
         if not target_hexes:
             return [SkipPursuitAction(player=player, battle_id=battle.id)]
@@ -329,6 +416,8 @@ class ResolutionMixin:
                 continue
             unit = state.get_unit(uid)
             if unit is None:
+                continue
+            if unit.disorganized:
                 continue
             for hex_coord in target_hexes:
                 if any(u.player != unit.player for u in state.units_at(hex_coord)):
@@ -425,11 +514,11 @@ class ResolutionMixin:
                 return PostBattlePhase.DEFENDER_SPLIT
             if battle.attacker_mandatory_cpl > 0 or battle.defender_mandatory_cpl > 0:
                 return PostBattlePhase.MANDATORY_CPL
-            return PostBattlePhase.PURSUIT
+            return PostBattlePhase.DISORG_ROLLS
         else:
             if battle.attacker_mandatory_cpl > 0 or battle.defender_mandatory_cpl > 0:
                 return PostBattlePhase.MANDATORY_CPL
-            return PostBattlePhase.PURSUIT
+            return PostBattlePhase.DISORG_ROLLS
 
     def _skip_empty_phase(self, state: GameState, battle: Battle) -> PostBattlePhase:
         """Skip post-battle phases that have no eligible units. Loops until stable."""
@@ -460,12 +549,22 @@ class ResolutionMixin:
                     side = "attacker" if phase == PostBattlePhase.ATTACKER_RETREAT else "defender"
                     phase = self._next_phase_after_side(battle, side)
                     continue
+            if phase == PostBattlePhase.DISORG_ROLLS:
+                probe = battle.replace(post_phase=phase)
+                if not self._compute_disorg_rolls(state, probe):
+                    phase = PostBattlePhase.PURSUIT
+                    continue
             if phase == PostBattlePhase.PURSUIT:
                 if not battle.pursuing_side:
                     phase = PostBattlePhase.DONE
                     continue
                 pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
-                if not any(state.get_unit(uid) for uid in pursuer_ids):
+                # Rule 14.3: disorganized units cannot pursue.
+                able = [
+                    uid for uid in pursuer_ids
+                    if (u := state.get_unit(uid)) is not None and not u.disorganized
+                ]
+                if not able:
                     phase = PostBattlePhase.DONE
                     continue
             break
@@ -510,13 +609,13 @@ class ResolutionMixin:
                 if atk_remaining > 0 or def_remaining > 0:
                     next_phase = PostBattlePhase.MANDATORY_CPL
                 else:
-                    next_phase = PostBattlePhase.PURSUIT
+                    next_phase = PostBattlePhase.DISORG_ROLLS
                 battle = battle.replace(
                     attacker_mandatory_cpl=atk_remaining,
                     defender_mandatory_cpl=def_remaining,
                 )
             else:
-                next_phase = PostBattlePhase.PURSUIT
+                next_phase = PostBattlePhase.DISORG_ROLLS
             updated = battle.replace(remaining_cpl_to_assign=0, post_phase=next_phase)
         else:
             updated = battle.replace(remaining_cpl_to_assign=remaining)
