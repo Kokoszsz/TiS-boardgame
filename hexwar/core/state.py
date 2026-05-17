@@ -19,7 +19,7 @@ class GameState:
     units_by_hex: dict[HexCoord, tuple[UnitId, ...]] = field(default_factory=dict)
     turn: int = 1
     phase_index: int = 0
-    active_player: Player = ""
+    active_player: Player = Player("")
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def get_unit(self, unit_id: UnitId) -> Unit | None:

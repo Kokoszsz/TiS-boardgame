@@ -8,7 +8,7 @@ from hexwar.core.actions import (
     EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
     RetreatUnitAction, SkipPursuitAction, StrategicMoveAction, UndeclareAttackAction,
 )
-from hexwar.core.battle import PostBattlePhase
+from hexwar.core.battle import PostBattlePhase, Side
 from hexwar.core.engine import Engine
 from hexwar.core.events import DisorganizationRolled
 from hexwar.core.hex import HexCoord
@@ -602,7 +602,7 @@ class PygameClient:
                     self.post_battle_selected_unit = None
                     return
             # Select pursuing unit (may belong to either player)
-            pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+            pursuer_ids = battle.units(battle.pursuing_side) if battle.pursuing_side is not None else ()
             eligible = [
                 u for u in state.units_at(clicked)
                 if u.id in pursuer_ids and u.id not in battle.units_pursued
@@ -754,7 +754,7 @@ class PygameClient:
             remaining = len([uid for uid in battle.units_needing_retreat if self.engine.state.get_unit(uid)])
             return f"Battle #{battle.id}  |  {name}  |  Click unit then target hex  |  {remaining} unit(s), {battle.remaining_retreat_steps} step(s)"
         if phase == PostBattlePhase.PURSUIT:
-            pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+            pursuer_ids = battle.units(battle.pursuing_side) if battle.pursuing_side is not None else ()
             remaining = sum(1 for uid in pursuer_ids if uid not in battle.units_pursued and self.engine.state.get_unit(uid))
             return f"Battle #{battle.id}  |  {name}  |  Click unit then target  |  {remaining} unit(s) left  |  S: skip all"
         return f"Battle #{battle.id}  |  {name}"
@@ -950,7 +950,7 @@ class PygameClient:
         pygame.draw.rect(self.screen, PANEL_BORDER, self.retreat_split_rect, 1)
 
         mouse_pos = pygame.mouse.get_pos()
-        side = self.retreat_split_options[0].side if self.retreat_split_options else ""
+        side = self.retreat_split_options[0].side.value if self.retreat_split_options else ""
         title = self.font.render(f"Choose {side} split:", True, TEXT_COLOR)
         self.screen.blit(title, (self.retreat_split_rect.x + 10, self.retreat_split_rect.y - 18))
 
@@ -1002,7 +1002,7 @@ class PygameClient:
 
         elif phase == PostBattlePhase.PURSUIT:
             selected = self.post_battle_selected_unit
-            pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+            pursuer_ids = battle.units(battle.pursuing_side) if battle.pursuing_side is not None else ()
             for uid in pursuer_ids:
                 if uid in battle.units_pursued:
                     continue

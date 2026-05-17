@@ -7,7 +7,7 @@ from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
 from hexwar.core.rng import GameRNG
 from hexwar.core.state import build_initial_state
-from hexwar.core.unit import Unit, UnitId
+from hexwar.core.unit import Player, Unit, UnitId
 from hexwar.systems.base import System
 from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B, WB48System
 
@@ -32,10 +32,10 @@ def make_unit(
 ) -> Unit:
     stats = {"strength": strength, **extra_stats}
     return Unit(
-        id=id,
+        id=UnitId(id),
         name=id,
         type_id=type_id,
-        player=player,
+        player=Player(player),
         position=HexCoord(q, r),
         stats=stats,
         movement_max=movement,

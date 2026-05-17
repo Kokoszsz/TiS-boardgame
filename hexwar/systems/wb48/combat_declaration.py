@@ -7,7 +7,7 @@ from hexwar.core.battle import Battle
 from hexwar.core.events import AttackDeclared, AttackUndeclared, Event
 from hexwar.core.hex import HexCoord
 from hexwar.core.state import GameState
-from hexwar.core.unit import Player
+from hexwar.core.unit import BattleId, Player, UnitId
 
 SUB_PHASE_DECLARATION = "declaration"
 SUB_PHASE_RESOLUTION = "resolution"
@@ -19,7 +19,7 @@ class DeclarationMixin:
         obligated_attackers, obligated_enemies = self._compute_obligations(state, player)
         state = state.with_metadata("combat_sub_phase", SUB_PHASE_DECLARATION)
         state = state.with_metadata("battles", [])
-        state = state.with_metadata("next_battle_id", 1)
+        state = state.with_metadata("next_battle_id", BattleId(1))
         state = state.with_metadata("committed_attackers", set())
         state = state.with_metadata("committed_defenders", set())
         state = state.with_metadata("obligated_attackers", obligated_attackers)
@@ -36,7 +36,7 @@ class DeclarationMixin:
 
     def _compute_obligations(
         self, state: GameState, player: Player
-    ) -> tuple[set[str], set[str]]:
+    ) -> tuple[set[UnitId], set[UnitId]]:
         """Compute which units MUST attack and which enemies MUST be attacked.
 
         Rule 7.21: All enemy units in your ZOC must be attacked.
@@ -44,8 +44,8 @@ class DeclarationMixin:
         Exception: units in field fortifications (entrenched) per 9.23.
         """
         entrenched_hexes = state.metadata.get("entrenched", {})
-        obligated_attackers: set[str] = set()
-        obligated_enemies: set[str] = set()
+        obligated_attackers: set[UnitId] = set()
+        obligated_enemies: set[UnitId] = set()
 
         for unit in state.units_of(player):
             if unit.position in entrenched_hexes and entrenched_hexes[unit.position] == player:
@@ -71,7 +71,7 @@ class DeclarationMixin:
         return (obligated_attackers <= committed_attackers and
                 obligated_enemies <= committed_defenders)
 
-    def _validate_topology(self, attacker_ids: tuple[str, ...], defender_hexes: tuple[HexCoord, ...], state: GameState) -> bool:
+    def _validate_topology(self, attacker_ids: tuple[UnitId, ...], defender_hexes: tuple[HexCoord, ...], state: GameState) -> bool:
         """Validate battle topology: fan-in OR fan-out, NOT many-to-many.
 
         Fan-in: multiple attacker hexes → ONE defender hex
@@ -89,16 +89,16 @@ class DeclarationMixin:
 
     def _get_defender_ids_for_hexes(
         self, state: GameState, defender_hexes: tuple[HexCoord, ...], player: Player
-    ) -> tuple[str, ...]:
+    ) -> tuple[UnitId, ...]:
         """Rule 7.24: all enemy units on target hexes must be attacked together."""
-        defender_ids = []
+        defender_ids: list[UnitId] = []
         for hex_coord in defender_hexes:
             for unit in state.units_at(hex_coord):
                 if unit.player != player:
                     defender_ids.append(unit.id)
         return tuple(defender_ids)
 
-    def _compute_ratio(self, state: GameState, attacker_ids: tuple[str, ...], defender_ids: tuple[str, ...]) -> str:
+    def _compute_ratio(self, state: GameState, attacker_ids: tuple[UnitId, ...], defender_ids: tuple[UnitId, ...]) -> str:
         """Compute attack strength ratio string."""
         atk_str = sum(state.get_unit(uid).stats.get("strength", 1) for uid in attacker_ids if state.get_unit(uid))
         def_str = sum(state.get_unit(uid).stats.get("strength", 1) for uid in defender_ids if state.get_unit(uid))
@@ -120,7 +120,7 @@ class DeclarationMixin:
         if not self._validate_topology(attacker_ids, defender_hexes, state):
             return state, []
 
-        committed_attackers = set(state.metadata.get("committed_attackers", set()))
+        committed_attackers: set[UnitId] = set(state.metadata.get("committed_attackers", set()))
         for uid in attacker_ids:
             unit = state.get_unit(uid)
             if unit is None or unit.player != player:
@@ -132,7 +132,7 @@ class DeclarationMixin:
         if not defender_ids:
             return state, []
 
-        committed_defenders = set(state.metadata.get("committed_defenders", set()))
+        committed_defenders: set[UnitId] = set(state.metadata.get("committed_defenders", set()))
         for did in defender_ids:
             if did in committed_defenders:
                 return state, []
@@ -143,8 +143,8 @@ class DeclarationMixin:
             if not any(dh in neighbors for dh in defender_hexes):
                 return state, []
 
-        battle_id = state.metadata.get("next_battle_id", 1)
-        combatant_origin: dict[str, HexCoord] = {}
+        battle_id: BattleId = state.metadata.get("next_battle_id", BattleId(1))
+        combatant_origin: dict[UnitId, HexCoord] = {}
         for uid in attacker_ids:
             unit = state.get_unit(uid)
             if unit is not None:
@@ -168,7 +168,7 @@ class DeclarationMixin:
         new_committed_defenders = committed_defenders | set(defender_ids)
 
         state = state.with_metadata("battles", battles)
-        state = state.with_metadata("next_battle_id", battle_id + 1)
+        state = state.with_metadata("next_battle_id", BattleId(battle_id + 1))
         state = state.with_metadata("committed_attackers", new_committed_attackers)
         state = state.with_metadata("committed_defenders", new_committed_defenders)
         state = state.with_metadata("declaration_complete", self._check_declaration_complete(state))
@@ -196,8 +196,8 @@ class DeclarationMixin:
 
         battles.remove(battle)
 
-        committed_attackers = set(state.metadata.get("committed_attackers", set()))
-        committed_defenders = set(state.metadata.get("committed_defenders", set()))
+        committed_attackers: set[UnitId] = set(state.metadata.get("committed_attackers", set()))
+        committed_defenders: set[UnitId] = set(state.metadata.get("committed_defenders", set()))
         committed_attackers -= set(battle.attacker_ids)
         committed_defenders -= set(battle.defender_ids)
 
@@ -217,8 +217,8 @@ class DeclarationMixin:
         committed_attackers = state.metadata.get("committed_attackers", set())
         committed_defenders = state.metadata.get("committed_defenders", set())
 
-        available_attackers: list[str] = []
-        attacker_to_enemy_hexes: dict[str, set[HexCoord]] = {}
+        available_attackers: list[UnitId] = []
+        attacker_to_enemy_hexes: dict[UnitId, set[HexCoord]] = {}
 
         for unit in state.units_of(player):
             if unit.id in committed_attackers:
@@ -237,7 +237,7 @@ class DeclarationMixin:
             return []
 
         actions: list[DeclareAttackAction] = []
-        seen: set[tuple[tuple[str, ...], tuple[HexCoord, ...]]] = set()
+        seen: set[tuple[tuple[UnitId, ...], tuple[HexCoord, ...]]] = set()
 
         max_attackers = min(len(available_attackers), 6)
         for size in range(1, max_attackers + 1):
@@ -263,10 +263,10 @@ class DeclarationMixin:
 
     def _fan_in_actions(
         self, state: GameState, player: Player,
-        attacker_combo: tuple[str, ...],
-        attacker_to_enemy_hexes: dict[str, set[HexCoord]],
-        committed_defenders: set[str],
-        seen: set[tuple[tuple[str, ...], tuple[HexCoord, ...]]],
+        attacker_combo: tuple[UnitId, ...],
+        attacker_to_enemy_hexes: dict[UnitId, set[HexCoord]],
+        committed_defenders: set[UnitId],
+        seen: set[tuple[tuple[UnitId, ...], tuple[HexCoord, ...]]],
         out: list[DeclareAttackAction],
     ) -> None:
         """Multiple attacker hexes → single defender hex."""
@@ -289,10 +289,10 @@ class DeclarationMixin:
 
     def _fan_out_actions(
         self, state: GameState, player: Player,
-        attacker_combo: tuple[str, ...],
-        attacker_to_enemy_hexes: dict[str, set[HexCoord]],
-        committed_defenders: set[str],
-        seen: set[tuple[tuple[str, ...], tuple[HexCoord, ...]]],
+        attacker_combo: tuple[UnitId, ...],
+        attacker_to_enemy_hexes: dict[UnitId, set[HexCoord]],
+        committed_defenders: set[UnitId],
+        seen: set[tuple[tuple[UnitId, ...], tuple[HexCoord, ...]]],
         out: list[DeclareAttackAction],
     ) -> None:
         """Single attacker hex → one or more defender hexes."""

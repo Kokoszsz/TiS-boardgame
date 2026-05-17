@@ -6,7 +6,7 @@ from hexwar.core.hex import HexCoord
 from hexwar.core.map import TerrainType
 from hexwar.core.pathfinding import reachable_hexes
 from hexwar.core.state import GameState
-from hexwar.core.unit import Player
+from hexwar.core.unit import Player, UnitId
 
 
 class MovementMixin:
@@ -31,8 +31,8 @@ class MovementMixin:
     def _is_blocked(self, state: GameState, coord: HexCoord) -> bool:
         return not state.hex_map.is_passable(coord)
 
-    def enemy_zoc_map(self, state: GameState, player: Player) -> dict[HexCoord, set[str]]:
-        zoc: dict[HexCoord, set[str]] = {}
+    def enemy_zoc_map(self, state: GameState, player: Player) -> dict[HexCoord, set[UnitId]]:
+        zoc: dict[HexCoord, set[UnitId]] = {}
         for unit in state.units.values():
             if unit.player == player:
                 continue
@@ -45,7 +45,7 @@ class MovementMixin:
 
     def _movement_cost_with_zoc(
         self, state: GameState, from_hex: HexCoord, to_hex: HexCoord,
-        player: Player, zoc_map: dict[HexCoord, set[str]],
+        player: Player, zoc_map: dict[HexCoord, set[UnitId]],
     ) -> float | None:
         base_cost = self._movement_cost(state, from_hex, to_hex)
         if base_cost is None:

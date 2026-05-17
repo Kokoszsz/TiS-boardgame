@@ -21,8 +21,8 @@ from hexwar.systems.wb48.combat_resolution import ResolutionMixin
 from hexwar.systems.wb48.movement import MovementMixin
 from hexwar.systems.wb48.strategic_movement import StrategicMovementMixin
 
-PLAYER_A = "player_a"
-PLAYER_B = "player_b"
+PLAYER_A = Player("player_a")
+PLAYER_B = Player("player_b")
 
 
 class WB48System(

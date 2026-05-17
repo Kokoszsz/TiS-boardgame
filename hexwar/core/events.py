@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from hexwar.core.battle import Side
 from hexwar.core.combat_results import CombatResult
 from hexwar.core.hex import HexCoord
-from hexwar.core.unit import Player, UnitId
+from hexwar.core.unit import BattleId, Player, UnitId
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,22 +55,22 @@ class TurnChanged(Event):
 
 @dataclass(frozen=True, slots=True)
 class AttackDeclared(Event):
-    battle_id: int
-    attacker_ids: tuple[str, ...]
-    defender_ids: tuple[str, ...]
+    battle_id: BattleId
+    attacker_ids: tuple[UnitId, ...]
+    defender_ids: tuple[UnitId, ...]
     attack_ratio: str
 
 
 @dataclass(frozen=True, slots=True)
 class AttackUndeclared(Event):
-    battle_id: int
+    battle_id: BattleId
 
 
 @dataclass(frozen=True, slots=True)
 class BattleResolved(Event):
-    battle_id: int
-    attacker_ids: tuple[str, ...]
-    defender_ids: tuple[str, ...]
+    battle_id: BattleId
+    attacker_ids: tuple[UnitId, ...]
+    defender_ids: tuple[UnitId, ...]
     attack_strength: int
     defense_strength: int
     dice_roll: tuple[int, int]
@@ -86,8 +87,8 @@ class BattleResolved(Event):
 
 @dataclass(frozen=True, slots=True)
 class RetreatSplitChosen(Event):
-    battle_id: int
-    side: str
+    battle_id: BattleId
+    side: Side
     retreat_hexes: int
     unit_losses: int
 
@@ -95,7 +96,7 @@ class RetreatSplitChosen(Event):
 @dataclass(frozen=True, slots=True)
 class UnitLostCpl(Event):
     unit_id: UnitId
-    battle_id: int
+    battle_id: BattleId
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +104,7 @@ class UnitRetreated(Event):
     unit_id: UnitId
     from_hex: HexCoord
     to_hex: HexCoord
-    battle_id: int
+    battle_id: BattleId
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,19 +112,19 @@ class UnitPursued(Event):
     unit_id: UnitId
     from_hex: HexCoord
     to_hex: HexCoord
-    battle_id: int
+    battle_id: BattleId
 
 
 @dataclass(frozen=True, slots=True)
 class UnitDisorganized(Event):
     unit_id: UnitId
-    battle_id: int
+    battle_id: BattleId
 
 
 @dataclass(frozen=True, slots=True)
 class DisorganizationRolled(Event):
     unit_id: UnitId
-    battle_id: int
+    battle_id: BattleId
     dice: tuple[int, int]
     total: int
     threshold: int

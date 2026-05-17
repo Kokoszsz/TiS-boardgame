@@ -21,6 +21,7 @@ from hexwar.core.actions import (
     MoveAction,
     PursuitAction,
     ResolveBattleAction,
+    ResolveDisorgRollsAction,
     RetreatUnitAction,
     SkipPursuitAction,
 )
@@ -76,6 +77,12 @@ def _resolve_all_post_battle(engine, player, max_iter=30):
         retreats = [a for a in legal if isinstance(a, RetreatUnitAction)]
         if retreats:
             do_actions(engine, retreats[0])
+            continue
+
+        # Disorg rolls
+        disorgs = [a for a in legal if isinstance(a, ResolveDisorgRollsAction)]
+        if disorgs:
+            do_actions(engine, disorgs[0])
             continue
 
         # Pursuit

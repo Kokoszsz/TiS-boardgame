@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NewType
 
 from hexwar.core.hex import HexCoord
 
-UnitId = str
-Player = str
+UnitId = NewType("UnitId", str)
+Player = NewType("Player", str)
+BattleId = NewType("BattleId", int)
 
 
 @dataclass(frozen=True, slots=True)

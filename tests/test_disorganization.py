@@ -5,7 +5,7 @@ from hexwar.core.actions import (
     DeclareAttackAction, EndPhaseAction, ResolveBattleAction,
     ResolveDisorgRollsAction,
 )
-from hexwar.core.battle import Battle, PostBattlePhase
+from hexwar.core.battle import Battle, PostBattlePhase, Side
 from hexwar.core.combat_results import CombatResult
 from hexwar.core.engine import Engine
 from hexwar.core.events import DisorganizationRolled, UnitDisorganized
@@ -302,7 +302,7 @@ class TestPhaseFlow:
         battle = _make_battle(
             result=CombatResult(),  # no star, no retreat
             post_phase=PostBattlePhase.DISORG_ROLLS,
-        ).replace(pursuing_side="attacker")
+        ).replace(pursuing_side=Side.ATTACKER)
         next_phase = mixin._skip_empty_phase(engine.state, battle)
         assert next_phase == PostBattlePhase.PURSUIT
 
@@ -318,7 +318,7 @@ class TestPhaseFlow:
         battle = _make_battle(
             result=CombatResult(),
             post_phase=PostBattlePhase.DISORG_ROLLS,
-        ).replace(pursuing_side="attacker")
+        ).replace(pursuing_side=Side.ATTACKER)
         next_phase = mixin._skip_empty_phase(engine.state, battle)
         assert next_phase == PostBattlePhase.DONE
 
@@ -365,7 +365,7 @@ class TestPursuitFiltersDisorganized:
             post_phase=PostBattlePhase.PURSUIT,
             retreat_paths={"b1": (HexCoord(3, 1),)},
         ).replace(
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={"b1": HexCoord(2, 1)},
         )
         actions = mixin._legal_pursuit_actions(engine.state, PLAYER_A, battle)

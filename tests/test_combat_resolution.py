@@ -7,7 +7,7 @@ from hexwar.core.actions import (
     AssignCplLossAction, ChooseRetreatSplitAction, DeclareAttackAction,
     EndPhaseAction, PursuitAction, ResolveBattleAction, RetreatUnitAction, SkipPursuitAction,
 )
-from hexwar.core.battle import Battle
+from hexwar.core.battle import Battle, Side
 from hexwar.core.combat_results import CombatResult
 from hexwar.core.events import (
     BattleResolved, RetreatSplitChosen, UnitLostCpl, UnitRetreated, UnitPursued,
@@ -258,7 +258,7 @@ class TestRetreatSplit:
             pytest.skip("CRT didn't give defender retreat for this seed")
         debt = battle.defender_debt
         do_actions(engine, ChooseRetreatSplitAction(
-            player=PLAYER_A, battle_id=1, side="defender",
+            player=PLAYER_A, battle_id=1, side=Side.DEFENDER,
             retreat_hexes=debt, unit_losses=0,
         ))
         battles = engine.state.metadata["battles"]
@@ -274,7 +274,7 @@ class TestRetreatSplit:
             pytest.skip("CRT didn't give defender retreat for this seed")
         debt = battle.defender_debt
         do_actions(engine, ChooseRetreatSplitAction(
-            player=PLAYER_A, battle_id=1, side="defender",
+            player=PLAYER_A, battle_id=1, side=Side.DEFENDER,
             retreat_hexes=0, unit_losses=debt,
         ))
         # Should now be in CPL assignment phase
@@ -302,7 +302,7 @@ class TestAssignCplLoss:
         # Navigate to a CPL phase
         if battle.post_phase == PostBattlePhase.DEFENDER_SPLIT:
             do_actions(engine, ChooseRetreatSplitAction(
-                player=PLAYER_A, battle_id=1, side="defender",
+                player=PLAYER_A, battle_id=1, side=Side.DEFENDER,
                 retreat_hexes=0, unit_losses=battle.defender_debt,
             ))
             battles = engine.state.metadata["battles"]
@@ -336,7 +336,7 @@ class TestRetreatMovement:
             debt = battle.defender_debt
             if debt > 0:
                 do_actions(engine, ChooseRetreatSplitAction(
-                    player=PLAYER_A, battle_id=1, side="defender",
+                    player=PLAYER_A, battle_id=1, side=Side.DEFENDER,
                     retreat_hexes=1, unit_losses=debt - 1,
                 ))
                 # If there are CPL to assign first
@@ -378,7 +378,7 @@ class TestPursuit:
 
         # Choose retreat=1, loss=0 — but mandatory CPL=1 is added, so 1 unit dies first
         do_actions(engine, ChooseRetreatSplitAction(
-            player=PLAYER_A, battle_id=1, side="attacker", retreat_hexes=1, unit_losses=0,
+            player=PLAYER_A, battle_id=1, side=Side.ATTACKER, retreat_hexes=1, unit_losses=0,
         ))
         # CPL kills the unit (mandatory applied before retreat)
         battle = engine.state.metadata["battles"][0]
@@ -391,7 +391,7 @@ class TestPursuit:
         # Unit dead → retreat skipped → pursuit for defender
         battle = engine.state.metadata["battles"][0]
         assert battle.post_phase == PostBattlePhase.PURSUIT
-        assert battle.pursuing_side == "defender"
+        assert battle.pursuing_side is Side.DEFENDER
         legal = engine.get_legal_actions()
         assert any(isinstance(a, PursuitAction) for a in legal)
 
@@ -412,7 +412,7 @@ class TestPursuit:
 
         # Split: choose 1 loss from split (debt covers it)
         do_actions(engine, ChooseRetreatSplitAction(
-            player=PLAYER_A, battle_id=1, side="attacker", retreat_hexes=0, unit_losses=1,
+            player=PLAYER_A, battle_id=1, side=Side.ATTACKER, retreat_hexes=0, unit_losses=1,
         ))
         # CPL phase: total_losses = split(1) + mandatory
         battle = engine.state.metadata["battles"][0]
@@ -502,7 +502,7 @@ class TestPursuit:
         battle = engine.state.metadata["battles"][0]
         assert first_uid in battle.units_pursued
         # Should still be in PURSUIT if other units haven't pursued
-        pursuer_ids = battle.attacker_ids if battle.pursuing_side == "attacker" else battle.defender_ids
+        pursuer_ids = battle.units(battle.pursuing_side) if battle.pursuing_side is not None else ()
         remaining = [uid for uid in pursuer_ids if uid not in battle.units_pursued and engine.state.get_unit(uid)]
         if remaining:
             assert battle.post_phase == PostBattlePhase.PURSUIT
@@ -561,7 +561,7 @@ class TestPursuit:
         do_actions(engine, ResolveBattleAction(player=PLAYER_A, battle_id=1))
 
         battle = engine.state.metadata["battles"][0]
-        assert battle.pursuing_side in ("attacker", "defender", "")
+        assert battle.pursuing_side in (Side.ATTACKER, Side.DEFENDER, None)
 
         # Complete through to pursuit
         for _ in range(20):
@@ -581,7 +581,7 @@ class TestPursuit:
             pursuit_actions = [a for a in legal if isinstance(a, PursuitAction)]
             skip_actions = [a for a in legal if isinstance(a, SkipPursuitAction)]
             assert skip_actions, "SkipPursuitAction must always be available"
-            if battle.pursuing_side == "defender":
+            if battle.pursuing_side is Side.DEFENDER:
                 for pa in pursuit_actions:
                     assert pa.unit_id in battle.defender_ids
 
@@ -762,7 +762,7 @@ class TestEncircledElimination:
         new_state, events = engine._system._apply_retreat_split(
             state,
             ChooseRetreatSplitAction(
-                player=PLAYER_A, battle_id=1, side="defender",
+                player=PLAYER_A, battle_id=1, side=Side.DEFENDER,
                 retreat_hexes=1, unit_losses=0,
             ),
         )
@@ -812,7 +812,7 @@ class TestEncircledElimination:
         new_state, _ = engine._system._apply_retreat_split(
             state,
             ChooseRetreatSplitAction(
-                player=PLAYER_A, battle_id=1, side="defender",
+                player=PLAYER_A, battle_id=1, side=Side.DEFENDER,
                 retreat_hexes=1, unit_losses=0,
             ),
         )
@@ -844,7 +844,7 @@ class TestPursuitFullHexElimination:
             defender_ids=("b1", "b2"),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={
                 "a1": HexCoord(1, 1),
                 "b1": HexCoord(2, 1),
@@ -879,7 +879,7 @@ class TestPursuitFullHexElimination:
             defender_ids=("b1", "b2"),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={
                 "a1": HexCoord(1, 1),
                 "b1": HexCoord(2, 1),
@@ -912,7 +912,7 @@ class TestPursuitTargets:
             defender_ids=("b1",),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
             retreat_paths={"b1": (HexCoord(3, 1), HexCoord(4, 1))},
         )
@@ -942,7 +942,7 @@ class TestPursuitTargets:
             defender_ids=("b1",),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={
                 "a1": HexCoord(1, 1), "a2": HexCoord(1, 1),
                 "b1": HexCoord(2, 1),
@@ -958,7 +958,7 @@ class TestPursuitTargets:
         assert "a2" in pursuer_ids, "organized a2 must generate pursuit actions"
 
     def test_empty_pursuing_side_yields_only_skip(self):
-        """Mutual destruction / no winner: pursuing_side='' → only SkipPursuitAction."""
+        """Mutual destruction / no winner: pursuing_side is None → only SkipPursuitAction."""
         engine = make_engine(units=[
             make_unit("a1", q=1, r=1, strength=3),
         ], seed=42)
@@ -969,7 +969,7 @@ class TestPursuitTargets:
             defender_ids=("b1",),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="",
+            pursuing_side=None,
             combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
             eliminated_at={"b1": HexCoord(2, 1)},
         )
@@ -992,7 +992,7 @@ class TestPursuitTargets:
             defender_ids=("b1", "b2"),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={
                 "a1": HexCoord(1, 1),
                 "b1": HexCoord(2, 1),  # killed
@@ -1028,7 +1028,7 @@ class TestPursuitTargets:
             defender_ids=("b1",),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
             eliminated_at={"b1": HexCoord(2, 1)},
         )
@@ -1054,7 +1054,7 @@ class TestPursuitTargets:
             defender_ids=("b1",),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={
                 "a1": HexCoord(1, 1), "a2": HexCoord(1, 1),
                 "b1": HexCoord(2, 1),
@@ -1082,7 +1082,7 @@ class TestPursuitTargets:
             defender_ids=("b1",),
             resolved=True,
             post_phase=PostBattlePhase.PURSUIT,
-            pursuing_side="attacker",
+            pursuing_side=Side.ATTACKER,
             combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
             eliminated_at={"b1": HexCoord(2, 1)},
         )
