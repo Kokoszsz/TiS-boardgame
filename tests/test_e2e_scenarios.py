@@ -28,6 +28,7 @@ from hexwar.core.battle import PostBattlePhase
 from hexwar.core.hex import HexCoord
 from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 from tests.conftest import (
+    advance_to_phase,
     assert_action_legal,
     assert_unit_at,
     assert_unit_destroyed,
@@ -142,9 +143,9 @@ class TestE2EAttackerWinsClean:
         for b in engine.state.metadata["battles"]:
             assert b.post_phase == PostBattlePhase.DONE
 
-        # End combat_a phase
+        # End combat_a phase, advance through strategic_move_a → move_b
         assert_action_legal(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        advance_to_phase(engine, "move_b")
 
         # Should now be in move_b
         assert engine.state.active_player == PLAYER_B
@@ -178,8 +179,8 @@ class TestE2EDefenderWins:
         battle = engine.state.metadata["battles"][0]
         assert battle.post_phase == PostBattlePhase.DONE
 
-        # End combat_a
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        # End combat_a → strategic_move_a → move_b
+        advance_to_phase(engine, "move_b")
         assert engine.state.active_player == PLAYER_B
 
 
@@ -217,8 +218,8 @@ class TestE2EMultiUnitDeclaration:
         do_actions(engine, ResolveBattleAction(PLAYER_A, battle_id=1))
         _resolve_all_post_battle(engine, PLAYER_A)
 
-        # Phase completes
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        # Phase completes — through strategic to move_b
+        advance_to_phase(engine, "move_b")
         assert engine.state.active_player == PLAYER_B
 
 
@@ -301,8 +302,8 @@ class TestE2EFullPhaseSequence:
         for b in engine.state.metadata["battles"]:
             assert b.post_phase == PostBattlePhase.DONE
 
-        # End combat_a
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        # End combat_a → strategic_move_a → move_b
+        advance_to_phase(engine, "move_b")
         assert engine.state.active_player == PLAYER_B
 
 
@@ -320,22 +321,14 @@ class TestE2EBothPlayersTurnCycle:
 
         # --- A's movement
         do_actions(engine, MoveAction(PLAYER_A, "A1", HexCoord(1, 0)))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-
-        # --- A's combat: no contact, no battles → skip cleanly
-        # No adjacent enemy, so declaration_complete triggers EndPhaseAction
-        legal = engine.get_legal_actions()
-        end_actions = [a for a in legal if isinstance(a, EndPhaseAction)]
-        assert end_actions
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        # Advance through combat (no contact) + strategic to B's turn
+        advance_to_phase(engine, "move_b")
 
         # --- B's movement
         assert engine.state.active_player == PLAYER_B
         do_actions(engine, MoveAction(PLAYER_B, "B1", HexCoord(3, 0)))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-
-        # --- B's combat
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        # Advance through combat + strategic to next turn
+        advance_to_phase(engine, "move_a")
 
         # Cycle back to A
         assert engine.state.active_player == PLAYER_A
@@ -353,10 +346,7 @@ class TestE2ENoCombat:
             seed=42,
         )
 
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # skip move
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # skip combat
-
-        # Should be in B's turn now
+        advance_to_phase(engine, "move_b")  # skip A's move/combat/strategic
         assert engine.state.active_player == PLAYER_B
 
 
@@ -405,7 +395,7 @@ class TestE2ECombatChain:
         do_actions(engine, EndPhaseAction(player=PLAYER_A))
         do_actions(engine, ResolveBattleAction(PLAYER_A, battle_id=1))
         _resolve_all_post_battle(engine, PLAYER_A)
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        advance_to_phase(engine, "move_b")
 
         # Should be B's turn now
         assert engine.state.active_player == PLAYER_B

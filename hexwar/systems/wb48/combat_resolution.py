@@ -21,7 +21,7 @@ from hexwar.systems.wb48.crt import lookup_crt
 
 class ResolutionMixin:
 
-    def _apply_end_phase(
+    def _apply_end_combat_subphase(
         self, state: GameState, action: EndPhaseAction
     ) -> tuple[GameState, list[Event]]:
         """Transitions from declaration to resolution sub-phase."""

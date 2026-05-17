@@ -259,15 +259,14 @@ class TestRemainingMovementPoints:
             make_unit("u1", q=1, r=1, movement=2),
             make_unit("u2", q=1, r=3, player=PLAYER_B, movement=2),
         ])
+        from tests.conftest import advance_to_phase
         do_actions(engine,
             MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(2, 1)),
             MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 1)),
-            EndPhaseAction(player=PLAYER_A),  # end move_a
-            EndPhaseAction(player=PLAYER_A),  # end combat_a
-            MoveAction(player=PLAYER_B, unit_id="u2", target=HexCoord(2, 3)),
-            EndPhaseAction(player=PLAYER_B),  # end move_b
-            EndPhaseAction(player=PLAYER_B),  # end combat_b
         )
+        advance_to_phase(engine, "move_b")
+        do_actions(engine, MoveAction(player=PLAYER_B, unit_id="u2", target=HexCoord(2, 3)))
+        advance_to_phase(engine, "move_a")
         # New turn, u1 has full 2 MP again
         move_again = MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(4, 1))
         assert_action_legal(engine, move_again)

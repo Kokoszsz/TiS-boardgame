@@ -112,3 +112,9 @@ class UnitPursued(Event):
 class UnitDisorganized(Event):
     unit_id: UnitId
     battle_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class SMTagToggled(Event):
+    unit_id: UnitId
+    tagged: bool

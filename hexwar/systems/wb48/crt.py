@@ -201,4 +201,5 @@ def lookup_crt(atk_strength: int, def_strength: int, dice_total: int) -> CombatR
     """Look up CRT result. Returns result string like 'A2/-' or '-1/B3D'."""
     ratio = strength_to_ratio(atk_strength, def_strength)
     combat_result_str = CRT.get((dice_total, ratio))
+    print(dice_total, ratio, "→", combat_result_str)
     return CombatResult.from_string(combat_result_str) 

@@ -39,9 +39,11 @@ class TestPhaseCycling:
         do_actions(
             engine,
             EndPhaseAction(player=PLAYER_A),  # move_a → combat_a
-            EndPhaseAction(player=PLAYER_A),  # combat_a → move_b
+            EndPhaseAction(player=PLAYER_A),  # combat_a → strategic_move_a
+            EndPhaseAction(player=PLAYER_A),  # strategic_move_a → move_b
             EndPhaseAction(player=PLAYER_B),  # move_b → combat_b
-            EndPhaseAction(player=PLAYER_B),  # combat_b → move_a (turn 2)
+            EndPhaseAction(player=PLAYER_B),  # combat_b → strategic_move_b
+            EndPhaseAction(player=PLAYER_B),  # strategic_move_b → move_a (turn 2)
         )
         assert engine.current_phase.id == "move_a"
         assert engine.state.turn == 2
@@ -175,6 +177,39 @@ class TestUndo:
         engine = make_engine(units=[make_unit("u1", player=PLAYER_A, q=1, r=1)])
         result = engine.undo()
         assert result is None
+
+    def test_undo_restores_rng_state(self):
+        """Regression: undo must restore RNG so re-resolution is deterministic.
+
+        Without RNG restore, replaying after undo consumes next RNG state,
+        diverging from original behavior.
+        """
+        from hexwar.core.actions import ResolveBattleAction
+        from hexwar.core.events import BattleResolved
+        engine = make_engine(units=[
+            make_unit("a1", player=PLAYER_A, q=1, r=1, strength=5),
+            make_unit("b1", player=PLAYER_B, q=2, r=1, strength=3),
+        ], seed=42)
+        # Set up a battle and resolve it
+        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # → combat_a
+        declare = DeclareAttackAction(
+            player=PLAYER_A,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+        )
+        do_actions(engine, declare)
+        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # → resolution
+        events1 = engine.submit_action(ResolveBattleAction(player=PLAYER_A, battle_id=1))
+        roll1 = next(e for e in events1 if isinstance(e, BattleResolved)).dice_total
+
+        # Undo resolution, re-resolve — must give SAME dice roll
+        engine.undo()
+        events2 = engine.submit_action(ResolveBattleAction(player=PLAYER_A, battle_id=1))
+        roll2 = next(e for e in events2 if isinstance(e, BattleResolved)).dice_total
+        assert roll1 == roll2, (
+            f"Undo+replay should produce same RNG outcome; "
+            f"got {roll1} then {roll2}"
+        )
 
 
 class TestInitialPhaseSetup:

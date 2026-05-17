@@ -4,7 +4,7 @@ from hexwar.core.actions import (
     Action, AssignCplLossAction, ChooseRetreatSplitAction,
     DeclareAttackAction, DeclareStrategicMovementAction, EndPhaseAction,
     EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
-    RetreatUnitAction, SkipPursuitAction, UndeclareAttackAction,
+    RetreatUnitAction, SkipPursuitAction, StrategicMoveAction, UndeclareAttackAction,
 )
 from hexwar.core.events import Event
 from hexwar.core.map import TerrainType
@@ -18,12 +18,19 @@ from hexwar.systems.wb48.combat_declaration import (
 from hexwar.core.battle import PostBattlePhase
 from hexwar.systems.wb48.combat_resolution import ResolutionMixin
 from hexwar.systems.wb48.movement import MovementMixin
+from hexwar.systems.wb48.strategic_movement import StrategicMovementMixin
 
 PLAYER_A = "player_a"
 PLAYER_B = "player_b"
 
 
-class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
+class WB48System(
+        #MovementMixin, StrategicMovementMixin alredy has MovementMixin
+        DeclarationMixin, 
+        ResolutionMixin, 
+        StrategicMovementMixin, 
+        System
+    ):
     name = "WB48System"
     version = "0.1"
 
@@ -44,16 +51,22 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
         self.phases = [
             PhaseDef(id="move_a", name="Player A Movement", player=PLAYER_A,
                      phase_type="movement",
-                     allowed_actions=[MoveAction, EntrenchAction, EndPhaseAction]),
+                     allowed_actions=[MoveAction, EntrenchAction, DeclareStrategicMovementAction, EndPhaseAction]),
             PhaseDef(id="combat_a", name="Player A Combat", player=PLAYER_A,
                      phase_type="combat",
                      allowed_actions=[DeclareAttackAction, UndeclareAttackAction, EndPhaseAction]),
+            PhaseDef(id="strategic_move_a", name="Player A Strategic Movement", player=PLAYER_A,
+                     phase_type="strategic_movement",
+                     allowed_actions=[StrategicMoveAction, EndPhaseAction]),
             PhaseDef(id="move_b", name="Player B Movement", player=PLAYER_B,
                      phase_type="movement",
-                     allowed_actions=[MoveAction, EntrenchAction, EndPhaseAction]),
+                     allowed_actions=[MoveAction, EntrenchAction, DeclareStrategicMovementAction, EndPhaseAction]),
             PhaseDef(id="combat_b", name="Player B Combat", player=PLAYER_B,
                      phase_type="combat",
                      allowed_actions=[DeclareAttackAction, UndeclareAttackAction, EndPhaseAction]),
+            PhaseDef(id="strategic_move_b", name="Player B Strategic Movement", player=PLAYER_B,
+                     phase_type="strategic_movement",
+                     allowed_actions=[StrategicMoveAction, EndPhaseAction]),
         ]
         self.unit_types = {
             "infantry": UnitTypeDef(
@@ -75,6 +88,12 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
 
         if EntrenchAction in phase.allowed_actions:
             actions.extend(self._legal_entrench_actions(state, player))
+
+        if DeclareStrategicMovementAction in phase.allowed_actions:
+            actions.extend(self._legal_declare_sm_actions(state, player))
+
+        if StrategicMoveAction in phase.allowed_actions:
+            actions.extend(self._legal_strategic_move_actions(state, player))
 
         if DeclareAttackAction in phase.allowed_actions:
             combat_sub_phase = state.metadata.get("combat_sub_phase")
@@ -99,6 +118,7 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
                     if not unresolved and all_done:
                         actions.append(EndPhaseAction(player=player))
         else:
+            # Non-combat phases: EndPhaseAction always available
             actions.append(EndPhaseAction(player=player))
 
         return actions
@@ -111,7 +131,7 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
         if isinstance(action, EntrenchAction):
             return self._apply_entrench(state, action)
         if isinstance(action, DeclareStrategicMovementAction):
-            return self._apply_declare_strategic_movement(state, action)
+            return self._declare_strategic_movement(state, action)
         if isinstance(action, DeclareAttackAction):
             return self._apply_declare_attack(state, action)
         if isinstance(action, UndeclareAttackAction):
@@ -128,8 +148,11 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
             return self._apply_pursuit(state, action)
         if isinstance(action, SkipPursuitAction):
             return self._apply_skip_pursuit(state, action)
+        if isinstance(action, StrategicMoveAction):
+            return self._apply_strategic_move(state, action)
+        
         if isinstance(action, EndPhaseAction):
-            return self._apply_end_phase(state, action)
+            return self._apply_end_combat_subphase(state, action)
         return state, []
 
     def victory(self, state: GameState) -> Player | None:
@@ -157,6 +180,11 @@ class WB48System(MovementMixin, DeclarationMixin, ResolutionMixin, System):
     ) -> tuple[GameState, list[Event]]:
         if phase.id in ("combat_a", "combat_b"):
             state = self._cleanup_combat_metadata(state)
+        if phase.id in ("strategic_move_a", "strategic_move_b"):
+            # Clear leftover SM tags (rule 11.12: tag valid only this turn)
+            for unit in list(state.units.values()):
+                if unit.strategic_movement:
+                    state = state.with_unit(unit.with_strategic_movement(False))
         return state, []
 
     def should_advance_phase(self, state: GameState) -> bool:

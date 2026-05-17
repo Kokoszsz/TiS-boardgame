@@ -57,7 +57,8 @@ class TestResolutionTransition:
             make_unit("a1", q=0, r=0),
             make_unit("b1", q=5, r=5, player=PLAYER_B),
         ])
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
+        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # combat_a → strategic_move_a
+        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # strategic_move_a → move_b
         assert engine.state.active_player == PLAYER_B
 
     def test_cannot_end_phase_during_resolution_with_unresolved(self):

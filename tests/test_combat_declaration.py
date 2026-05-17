@@ -349,8 +349,9 @@ class TestMetadataCleanup:
             make_unit("a1", player=PLAYER_A, q=0, r=0),
             make_unit("b1", player=PLAYER_B, q=5, r=5),
         ])
-        # Full cycle: move_a -> combat_a -> move_b
+        # Full cycle: move_a -> combat_a -> strategic_move_a -> move_b
         do_actions(engine, EndPhaseAction(player=PLAYER_A))  # -> combat_a
+        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # -> strategic_move_a
         do_actions(engine, EndPhaseAction(player=PLAYER_A))  # -> move_b
         assert engine.current_phase.id == "move_b"
         assert len(engine.state.units_by_hex) > 0
@@ -359,8 +360,9 @@ class TestMetadataCleanup:
         moves = [a for a in legal if isinstance(a, MoveAction)]
         assert len(moves) > 0
 
-        # Continue: move_b -> combat_b -> move_a (turn 2)
+        # Continue: move_b -> combat_b -> strategic_move_b -> move_a (turn 2)
         do_actions(engine, EndPhaseAction(player=PLAYER_B))  # -> combat_b
+        do_actions(engine, EndPhaseAction(player=PLAYER_B))  # -> strategic_move_b
         do_actions(engine, EndPhaseAction(player=PLAYER_B))  # -> move_a (turn 2)
         assert engine.current_phase.id == "move_a"
         assert engine.state.turn == 2

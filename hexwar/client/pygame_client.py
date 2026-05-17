@@ -4,9 +4,9 @@ import pygame
 
 from hexwar.core.actions import (
     AssignCplLossAction, ChooseRetreatSplitAction,
-    DeclareAttackAction, EndPhaseAction,
+    DeclareAttackAction, DeclareStrategicMovementAction, EndPhaseAction,
     EntrenchAction, MoveAction, PursuitAction, ResolveBattleAction,
-    RetreatUnitAction, SkipPursuitAction, UndeclareAttackAction,
+    RetreatUnitAction, SkipPursuitAction, StrategicMoveAction, UndeclareAttackAction,
 )
 from hexwar.core.battle import PostBattlePhase
 from hexwar.core.engine import Engine
@@ -53,6 +53,11 @@ PANEL_ITEM_BG = (60, 60, 70)
 PANEL_ITEM_HOVER = (80, 100, 130)
 PANEL_BORDER = (120, 120, 140)
 EXHAUSTED_TINT = (80, 80, 80)
+BORDER_FULL_MP = (80, 200, 80)
+BORDER_PARTIAL_MP = (220, 200, 50)
+BORDER_EXHAUSTED = (200, 60, 60)
+BORDER_NEUTRAL = (200, 200, 200)
+SM_TAG_COLOR = (100, 180, 255)
 
 BTN_Y = SCREEN_H - UI_HEIGHT + 20
 BTN_H = 40
@@ -85,6 +90,7 @@ class PygameClient:
         self.unit_picker_item_rects: list[pygame.Rect] = []
         self.unit_picker_hex: HexCoord | None = None
         self.can_entrench = False
+        self.can_declare_sm = False
 
         # Combat declaration UI state
         self.selected_attackers: list[str] = []
@@ -131,6 +137,8 @@ class PygameClient:
                         self._end_phase()
                     elif event.key == pygame.K_f:
                         self._do_entrench()
+                    elif event.key == pygame.K_t:
+                        self._do_toggle_sm()
                     elif event.key == pygame.K_u:
                         self._undo()
                     elif event.key == pygame.K_d:
@@ -170,7 +178,7 @@ class PygameClient:
         phase = self.engine.current_phase
         sub_phase = self.engine.state.metadata.get("combat_sub_phase")
 
-        if phase.phase_type == "movement":
+        if phase.phase_type in ("movement", "strategic_movement"):
             self._handle_movement_click(clicked, pos)
         elif phase.phase_type == "combat":
             if sub_phase == SUB_PHASE_DECLARATION:
@@ -212,6 +220,14 @@ class PygameClient:
                 is_visible=lambda: self.can_entrench,
                 bg_color=(80, 80, 120),
                 border_color=(150, 150, 200),
+            ),
+            UIButton(
+                rect=pygame.Rect(SCREEN_W - 450, BTN_Y, BTN_W, BTN_H),
+                label="Tag SM (T)",
+                on_click=self._do_toggle_sm,
+                is_visible=lambda: self.can_declare_sm,
+                bg_color=(60, 90, 130),
+                border_color=(120, 170, 230),
             ),
         ]
 
@@ -694,6 +710,7 @@ class PygameClient:
         self.legal_moves.clear()
         self.enemy_zoc.clear()
         self.can_entrench = False
+        self.can_declare_sm = False
         if not self.selected_unit_id:
             return
 
@@ -706,17 +723,27 @@ class PygameClient:
 
         legal = self.engine.get_legal_actions()
         for action in legal:
-            if isinstance(action, MoveAction) and action.unit_id == self.selected_unit_id:
+            if isinstance(action, (MoveAction, StrategicMoveAction)) and action.unit_id == self.selected_unit_id:
                 self.legal_moves.add(action.target)
             elif isinstance(action, EntrenchAction) and action.unit_id == self.selected_unit_id:
                 self.can_entrench = True
+            elif isinstance(action, DeclareStrategicMovementAction) and action.unit_id == self.selected_unit_id:
+                self.can_declare_sm = True
 
     def _do_move(self, target: HexCoord) -> None:
-        action = MoveAction(
-            player=self.engine.state.active_player,
-            unit_id=self.selected_unit_id,
-            target=target,
-        )
+        phase_id = self.engine.current_phase.id
+        if phase_id in ("strategic_move_a", "strategic_move_b"):
+            action = StrategicMoveAction(
+                player=self.engine.state.active_player,
+                unit_id=self.selected_unit_id,
+                target=target,
+            )
+        else:
+            action = MoveAction(
+                player=self.engine.state.active_player,
+                unit_id=self.selected_unit_id,
+                target=target,
+            )
         events = self.engine.submit_action(action)
         for e in events:
             self.event_log.append(str(e))
@@ -726,6 +753,18 @@ class PygameClient:
         if not self.can_entrench or not self.selected_unit_id:
             return
         action = EntrenchAction(
+            player=self.engine.state.active_player,
+            unit_id=self.selected_unit_id,
+        )
+        events = self.engine.submit_action(action)
+        for e in events:
+            self.event_log.append(str(e))
+        self._select_unit(self.selected_unit_id)
+
+    def _do_toggle_sm(self) -> None:
+        if not self.can_declare_sm or not self.selected_unit_id:
+            return
+        action = DeclareStrategicMovementAction(
             player=self.engine.state.active_player,
             unit_id=self.selected_unit_id,
         )
@@ -949,6 +988,18 @@ class PygameClient:
     def _is_unit_exhausted(self, unit: Unit) -> bool:
         return unit.movement_left == 0 and unit.movement_left < unit.movement_max
 
+    def _is_movement_phase(self) -> bool:
+        return self.engine.current_phase.id in ("move_a", "move_b")
+
+    def _mp_border_color(self, unit: Unit) -> tuple[int, int, int]:
+        if not self._is_movement_phase() or unit.player != self.engine.state.active_player:
+            return BORDER_NEUTRAL
+        if unit.movement_left == 0 and unit.movement_left < unit.movement_max:
+            return BORDER_EXHAUSTED
+        if unit.movement_left == unit.movement_max:
+            return BORDER_FULL_MP
+        return BORDER_PARTIAL_MP
+
     def _draw_units(self) -> None:
         state = self.engine.state
         units_by_hex: dict[HexCoord, list[Unit]] = {}
@@ -976,8 +1027,8 @@ class PygameClient:
                     color = tuple((c + g) // 2 for c, g in zip(color, EXHAUSTED_TINT))
 
                 pygame.draw.circle(self.screen, color, (int(sx), int(sy)), 14)
-                outline_color = (120, 120, 120) if exhausted else (255, 255, 255)
-                pygame.draw.circle(self.screen, outline_color, (int(sx), int(sy)), 14, 1)
+                unit_border_color = self._mp_border_color(unit)
+                pygame.draw.circle(self.screen, unit_border_color, (int(sx), int(sy)), 14, 2)
 
                 label = unit.type_id[0].upper()
                 text = self.font.render(label, True, (255, 255, 255))
@@ -987,11 +1038,15 @@ class PygameClient:
                 str_text = self.font.render(str_val, True, (255, 255, 200))
                 self.screen.blit(str_text, (int(sx) - str_text.get_width() // 2, int(sy) + 14))
 
-                if exhausted:
-                    pygame.draw.line(self.screen, (200, 60, 60),
+                if exhausted and self._is_movement_phase():
+                    pygame.draw.line(self.screen, BORDER_EXHAUSTED,
                                      (int(sx) - 10, int(sy) - 10), (int(sx) + 10, int(sy) + 10), 2)
-                    pygame.draw.line(self.screen, (200, 60, 60),
+                    pygame.draw.line(self.screen, BORDER_EXHAUSTED,
                                      (int(sx) + 10, int(sy) - 10), (int(sx) - 10, int(sy) + 10), 2)
+
+                if unit.strategic_movement:
+                    sm_text = self.font_small.render("SM", True, SM_TAG_COLOR)
+                    self.screen.blit(sm_text, (int(sx) - 14, int(sy) - 24))
 
             entrenched = state.metadata.get("entrenched", {})
             if coord in entrenched:
@@ -1096,6 +1151,11 @@ class PygameClient:
         state = self.engine.state
         phase = self.engine.current_phase
 
+        # Reserve right side of panel for buttons; text limited to left region
+        text_max_x = SCREEN_W - 470  # widest button col starts at SCREEN_W-450
+        text_clip = pygame.Rect(0, SCREEN_H - UI_HEIGHT, text_max_x, UI_HEIGHT)
+        self.screen.set_clip(text_clip)
+
         info = f"Turn {state.turn}  |  {phase.name}  |  Active: {state.active_player}"
         info_surf = self.font_big.render(info, True, TEXT_COLOR)
         self.screen.blit(info_surf, (15, SCREEN_H - UI_HEIGHT + 10))
@@ -1126,7 +1186,7 @@ class PygameClient:
                     f"{unresolved}/{len(battles)} remaining  |  E: end phase"
                 )
         else:
-            controls = "Click: select/move/attack  |  F: entrench  |  E: end phase  |  U: undo  |  RMB: pan  |  Q: quit"
+            controls = "Click: select/move  |  F: entrench  |  T: tag SM  |  E: end  |  U: undo  |  RMB: pan  |  Q: quit"
         ctrl_surf = self.font.render(controls, True, (150, 150, 150))
         self.screen.blit(ctrl_surf, (15, SCREEN_H - UI_HEIGHT + 35))
 
@@ -1134,6 +1194,8 @@ class PygameClient:
             last = self.event_log[-1][:80]
             log_surf = self.font.render(last, True, (180, 180, 100))
             self.screen.blit(log_surf, (15, SCREEN_H - UI_HEIGHT + 55))
+
+        self.screen.set_clip(None)
 
         for btn in self.buttons:
             if btn.is_visible():
@@ -1177,7 +1239,8 @@ def build_test_scenario() -> Engine:
     ]
 
     system = WB48System()
-    rng = GameRNG(seed=42)
+    import time
+    rng = GameRNG(seed=time.time_ns() & 0xFFFFFFFF)
 
     state = build_initial_state(
         scenario_id="test_visual",

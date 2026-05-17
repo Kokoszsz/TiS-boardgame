@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from hexwar.core.actions import EntrenchAction, MoveAction
-from hexwar.core.events import Event, UnitEntrenched, UnitMoved
+from hexwar.core.actions import DeclareStrategicMovementAction, EntrenchAction, MoveAction, StrategicMoveAction
+from hexwar.core.events import Event, SMTagToggled, UnitEntrenched, UnitMoved
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import TerrainType
 from hexwar.core.pathfinding import reachable_hexes
@@ -59,39 +59,61 @@ class MovementMixin:
         if from_sources:
             return base_cost + 1
         return base_cost
+    
+    def _move_targets_for_unit(
+        self, state, player, unit, mp, *,
+        allow_overrun: bool, block_zoc_entry: bool = False,
+    ) -> list[HexCoord]:
+        """Compute legal move targets for one unit with given MP + overrun rule.
+
+        block_zoc_entry: if True, ZOC entry is impassable (rule 11.22 for SM).
+            Default False keeps the standard "ZOC entry consumes all MP" rule.
+        """
+        if mp <= 0:
+            return []
+        zoc_map = self.enemy_zoc_map(state, player)
+        base_cost_fn = lambda f, t: self._movement_cost_with_zoc(state, f, t, player, zoc_map)
+        if block_zoc_entry:
+            def cost_fn(f, t):
+                c = base_cost_fn(f, t)
+                return None if c == float('inf') else c
+        else:
+            cost_fn = base_cost_fn
+        blocked_fn = lambda c: (
+            self._is_blocked(state, c)
+            or any(u.player != player for u in state.units_at(c))
+        )
+        reachable = reachable_hexes(
+            unit.position, mp, cost_fn, blocked_fn,
+            allow_first_step_overrun=allow_overrun,
+        )
+        valid = []
+        unit_stack = unit.stats.get("stack_size", 1)
+        for target in reachable:
+            units_there = state.units_at(target)
+            if any(u.player != player for u in units_there):
+                continue
+            friendly_stack = sum(
+                u.stats.get("stack_size", 1) for u in units_there if u.player == player
+            )
+            if friendly_stack + unit_stack > self.STACK_LIMIT:
+                continue
+            valid.append(target)
+        return valid
+
 
     def _legal_move_actions(self, state: GameState, player: Player) -> list[MoveAction]:
         actions: list[MoveAction] = []
-        zoc_map = self.enemy_zoc_map(state, player)
         for unit in state.units_of(player):
-            move_range = unit.movement_left
-            if move_range <= 0:
-                continue
             already_moved = unit.movement_left < unit.movement_max
-            cost_fn = lambda f, t: self._movement_cost_with_zoc(
-                state, f, t, player, zoc_map,
+            targets = self._move_targets_for_unit(
+                state, player, unit, unit.movement_left,
+                allow_overrun=not already_moved,
             )
-            blocked_fn = lambda c: (
-                self._is_blocked(state, c)
-                or any(u.player != player for u in state.units_at(c))
-            )
-            reachable = reachable_hexes(
-                unit.position, move_range, cost_fn, blocked_fn,
-                allow_first_step_overrun=not already_moved,
-            )
-            for target in reachable:
-                units_there = state.units_at(target)
-                enemies = [u for u in units_there if u.player != player]
-                if enemies:
-                    continue
-                friendly_stack = sum(
-                    u.stats.get("stack_size", 1) for u in units_there if u.player == player
-                )
-                unit_stack = unit.stats.get("stack_size", 1)
-                if friendly_stack + unit_stack > self.STACK_LIMIT:
-                    continue
-                actions.append(MoveAction(player=player, unit_id=unit.id, target=target))
+            actions.extend(MoveAction(player=player, unit_id=unit.id, target=t) for t in targets)
         return actions
+
+
 
     def _legal_entrench_actions(self, state: GameState, player: Player) -> list[EntrenchAction]:
         actions: list[EntrenchAction] = []
@@ -155,3 +177,44 @@ class MovementMixin:
         new_state = state.with_metadata("entrenched", entrenched)
         new_state = new_state.with_unit(unit.with_movement_left(0))
         return new_state, [UnitEntrenched(unit_id=action.unit_id, at_hex=unit.position)]
+    
+    def _legal_declare_sm_actions(
+        self, state: GameState, player: Player,
+    ) -> list[DeclareStrategicMovementAction]:
+        """Units eligible for SM tagging: own, unmoved/un-entrenched, not in enemy ZOC.
+
+        Per rule 11.12. Toggle action — always offered for eligible units
+        (player may tag or untag).
+        """
+        actions: list[DeclareStrategicMovementAction] = []
+        zoc_map = self.enemy_zoc_map(state, player)
+        for unit in state.units_of(player):
+            # Already-tagged units stay tagged-toggleable, even if zero MP.
+            # For untagged units: require full MP (proxy for "did not move/entrench").
+            if not unit.strategic_movement:
+                if unit.movement_left < unit.movement_max:
+                    continue
+                if unit.position in zoc_map:
+                    continue
+            actions.append(DeclareStrategicMovementAction(
+                player=player, unit_id=unit.id,
+            ))
+        return actions
+
+    def _declare_strategic_movement(
+        self, state: GameState, action: DeclareStrategicMovementAction,
+    ) -> tuple[GameState, list[Event]]:
+        """Toggle SM tag on unit. Engine guarantees action was in legal set.
+
+        Does NOT touch movement_left — tagging is a flag, not movement.
+        Tagged unit stays at full MP through movement phase (proxy for
+        "did not move"), then gets MP-2 budget in SM phase.
+        """
+        unit = state.get_unit(action.unit_id)
+        if unit is None:
+            return state, []
+        new_unit = unit.with_strategic_movement(not unit.strategic_movement)
+        new_state = state.with_unit(new_unit)
+        return new_state, [SMTagToggled(
+            unit_id=action.unit_id, tagged=new_unit.strategic_movement,
+        )]

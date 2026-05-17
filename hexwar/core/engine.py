@@ -16,6 +16,7 @@ class HistoryEntry:
     state_before: GameState
     state_after: GameState
     events: list[Event]
+    rng_state_before: tuple = ()
 
 
 class Engine:
@@ -50,6 +51,7 @@ class Engine:
             )
 
         state_before = self._state
+        rng_state_before = self._rng.get_state()
         all_events: list[Event] = []
 
         if isinstance(action, EndPhaseAction):
@@ -82,6 +84,7 @@ class Engine:
                 state_before=state_before,
                 state_after=self._state,
                 events=all_events,
+                rng_state_before=rng_state_before,
             )
         )
 
@@ -98,6 +101,8 @@ class Engine:
             return None
         entry = self._history.pop()
         self._state = entry.state_before
+        if entry.rng_state_before:
+            self._rng.set_state(entry.rng_state_before)
         return self._state
 
     def get_history(self) -> list[HistoryEntry]:

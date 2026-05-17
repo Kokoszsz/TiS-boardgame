@@ -16,6 +16,7 @@ from hexwar.core.map import HexMap, TerrainLayer, TerrainType
 from hexwar.systems.wb48.system import PLAYER_A, PLAYER_B
 
 from tests.conftest import (
+    advance_to_phase,
     assert_action_illegal,
     assert_action_legal,
     do_actions,
@@ -96,11 +97,8 @@ class TestEntrenchRemoval:
         """Fortification removed if unit moves away and no other friendly stays."""
         engine = make_engine(units=[make_unit("u1", q=2, r=2, movement=3)])
         do_actions(engine, EntrenchAction(player=PLAYER_A, unit_id="u1"))
-        # End phase, start new movement phase
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # end move_a
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))  # end combat_a
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))  # end move_b
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))  # end combat_b (new turn)
+        # Advance to next turn's move_a
+        advance_to_phase(engine, "move_a")
         # Now player A movement again, unit can move
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
         entrenched = engine.state.metadata.get("entrenched", {})
@@ -113,11 +111,7 @@ class TestEntrenchRemoval:
             make_unit("u2", q=1, r=2, movement=3),
         ])
         do_actions(engine, EntrenchAction(player=PLAYER_A, unit_id="u1"))
-        # End phase cycle to next turn
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")
         # Move u2 to entrenched hex, then move u1 away
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u2", target=HexCoord(2, 2)))
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
@@ -131,13 +125,7 @@ class TestEntrenchRemoval:
             make_unit("b1", player=PLAYER_B, q=4, r=2, movement=3),
         ])
         do_actions(engine, EntrenchAction(player=PLAYER_A, unit_id="u1"))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        # Player B movement — move unit A away first via next turn...
-        # Actually let's just move A away in same scenario
-        # Easier: A leaves, then B enters
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")  # turn 2 move_a
         # Turn 2: A moves away
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(1, 2)))
         # Entrenchment gone (no friendly remains)
@@ -150,11 +138,7 @@ class TestEntrenchPersistence:
         """Fortification stays if unit doesn't leave."""
         engine = make_engine(units=[make_unit("u1", q=2, r=2, movement=2)])
         do_actions(engine, EntrenchAction(player=PLAYER_A, unit_id="u1"))
-        # Full turn cycle
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")
         entrenched = engine.state.metadata.get("entrenched", {})
         assert HexCoord(2, 2) in entrenched
 
@@ -162,11 +146,7 @@ class TestEntrenchPersistence:
         """Already entrenched hex — can't entrench again."""
         engine = make_engine(units=[make_unit("u1", q=2, r=2, movement=2)])
         do_actions(engine, EntrenchAction(player=PLAYER_A, unit_id="u1"))
-        # Next turn
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")
         action = EntrenchAction(player=PLAYER_A, unit_id="u1")
         assert_action_illegal(engine, action)
 
@@ -177,21 +157,12 @@ class TestEntrenchPersistence:
         ])
         do_actions(engine, EntrenchAction(player=PLAYER_A, unit_id="u1"))
         # Move away (destroys entrenchment), then move back
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 2)))
         # Next turn — move back
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")
         do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(2, 2)))
         # Next turn — entrench again
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_A))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
-        do_actions(engine, EndPhaseAction(player=PLAYER_B))
+        advance_to_phase(engine, "move_a")
         action = EntrenchAction(player=PLAYER_A, unit_id="u1")
         assert_action_legal(engine, action)

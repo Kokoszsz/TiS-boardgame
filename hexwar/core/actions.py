@@ -86,6 +86,11 @@ class DeclareStrategicMovementAction(Action):
     unit_id: UnitId
 
 
+@dataclass(frozen=True, slots=True)
+class StrategicMoveAction(Action):
+    unit_id: UnitId
+    target: HexCoord
+
 
 @dataclass(frozen=True, slots=True)
 class EndPhaseAction(Action):

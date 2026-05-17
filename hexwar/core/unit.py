@@ -48,4 +48,4 @@ class Unit:
         return dataclasses.replace(self, movement_max=mp)
 
     def with_strategic_movement(self, value: bool) -> Unit:
-        return dataclasses.replace(self, strategic_movement=value)
+        return dataclasses.replace(self, movement_left=0, strategic_movement=value)

@@ -76,6 +76,28 @@ def do_actions(engine: Engine, *actions: Action) -> list[Event]:
     return all_events
 
 
+def advance_to_phase(engine: Engine, phase_id: str, max_steps: int = 30) -> None:
+    """Advance phases until engine reaches the named phase.
+
+    Always performs at least one EndPhaseAction, so calling with the
+    current phase_id advances to its NEXT occurrence (useful for
+    cycling to next turn's same phase).
+
+    Skips through interstitial phases (e.g. strategic_move_*) where no
+    actions are required. Raises on overflow.
+    """
+    from hexwar.core.actions import EndPhaseAction
+    for _ in range(max_steps):
+        player = engine.state.active_player
+        engine.submit_action(EndPhaseAction(player=player))
+        if engine.current_phase.id == phase_id:
+            return
+    raise AssertionError(
+        f"Could not reach phase {phase_id} in {max_steps} steps; "
+        f"now at {engine.current_phase.id}"
+    )
+
+
 def assert_unit_at(engine: Engine, unit_id: UnitId, q: int, r: int) -> None:
     unit = engine.state.get_unit(unit_id)
     assert unit is not None, f"Unit {unit_id} not found"

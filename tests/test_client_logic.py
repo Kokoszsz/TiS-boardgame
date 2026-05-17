@@ -647,5 +647,6 @@ class TestNoEnemiesInContact:
         client = _make_client(engine, mock_pygame)
 
         client._end_phase()  # → combat_a
-        client._end_phase()  # → through resolution → move_b
+        client._end_phase()  # → strategic_move_a
+        client._end_phase()  # → move_b
         assert engine.current_phase.id == "move_b"
