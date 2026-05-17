@@ -1095,3 +1095,168 @@ class TestPursuitTargets:
             "SkipPursuitAction must always be offered"
         assert any(isinstance(a, PursuitAction) for a in legal), \
             "pursuit actions present alongside skip"
+
+
+class TestRetreatIntoZOC:
+    """Gap #8: retreat into enemy ZOC must be blocked (rule 7.39)."""
+
+    def test_retreat_hex_in_enemy_zoc_not_offered(self):
+        """Unit cannot retreat into hex controlled by enemy ZOC."""
+        # b1 at (2,1), attacker a1 at (1,1).
+        # Place enemy e2 at (4,1) — its ZOC covers (3,1), blocking retreat east.
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("e2", q=4, r=1, strength=3),  # ZOC blocks (3,1)
+            make_unit("b1", q=2, r=1, player=PLAYER_B, strength=1),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.DEFENDER_RETREAT,
+            remaining_retreat_steps=1,
+            units_needing_retreat=("b1",),
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
+
+        legal = engine._system._legal_retreat_actions(state, PLAYER_A, battle)
+        targets = {a.target for a in legal}
+        assert HexCoord(3, 1) not in targets, \
+            "Hex (3,1) is in e2's ZOC — retreat must be blocked"
+
+    def test_retreat_hex_outside_zoc_allowed(self):
+        """Hex not in any enemy ZOC is valid retreat target."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("b1", q=2, r=1, player=PLAYER_B, strength=1),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.DEFENDER_RETREAT,
+            remaining_retreat_steps=1,
+            units_needing_retreat=("b1",),
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
+
+        legal = engine._system._legal_retreat_actions(state, PLAYER_A, battle)
+        targets = {a.target for a in legal}
+        assert len(targets) > 0, "Some retreat hexes must be valid (no blocking ZOC)"
+
+
+class TestRetreatStackingLimit:
+    """Gap #9: retreat blocked by stacking limit (rule 7.44)."""
+
+    def test_retreat_hex_at_stack_limit_blocked(self):
+        """Retreat to hex already at STACK_LIMIT (6) must be blocked."""
+        # Fill (3,1) with 6 stack points of friendly units
+        friendly_stack = [
+            make_unit(f"bf{i}", q=3, r=1, player=PLAYER_B, strength=1, stack_size=1)
+            for i in range(6)
+        ]
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("b1", q=2, r=1, player=PLAYER_B, strength=1, stack_size=1),
+            *friendly_stack,
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.DEFENDER_RETREAT,
+            remaining_retreat_steps=1,
+            units_needing_retreat=("b1",),
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
+
+        legal = engine._system._legal_retreat_actions(state, PLAYER_A, battle)
+        targets = {a.target for a in legal}
+        assert HexCoord(3, 1) not in targets, \
+            "Hex at stack limit must not be a valid retreat target"
+
+    def test_retreat_hex_under_stack_limit_allowed(self):
+        """Retreat to hex with room under STACK_LIMIT is valid."""
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("b1", q=2, r=1, player=PLAYER_B, strength=1, stack_size=1),
+            make_unit("bf1", q=3, r=1, player=PLAYER_B, strength=1, stack_size=1),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            post_phase=PostBattlePhase.DEFENDER_RETREAT,
+            remaining_retreat_steps=1,
+            units_needing_retreat=("b1",),
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
+
+        legal = engine._system._legal_retreat_actions(state, PLAYER_A, battle)
+        targets = {a.target for a in legal}
+        assert HexCoord(3, 1) in targets, \
+            "Hex under stack limit should be valid retreat target"
+
+
+class TestMandatoryCplFullFlow:
+    """Gap #10: mandatory CPL assignment through full engine pipeline."""
+
+    def test_mandatory_cpl_destroys_unit_via_engine(self):
+        """Mandatory casualty result (-1/-1) assigns CPL through engine."""
+        from hexwar.systems.wb48.combat_resolution import ResolutionMixin
+        mixin = ResolutionMixin()
+        result = CombatResult(attacker_casualties=1, defender_casualties=1)
+        assert mixin._initial_post_phase(result) == PostBattlePhase.MANDATORY_CPL
+
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, strength=3),
+            make_unit("b1", q=2, r=1, player=PLAYER_B, strength=3),
+        ], seed=42)
+        battle = Battle(
+            id=1,
+            attacker_ids=("a1",),
+            defender_hexes=(HexCoord(2, 1),),
+            defender_ids=("b1",),
+            resolved=True,
+            result=result,
+            post_phase=PostBattlePhase.MANDATORY_CPL,
+            attacker_mandatory_cpl=1,
+            defender_mandatory_cpl=1,
+            remaining_cpl_to_assign=1,
+            combatant_origin={"a1": HexCoord(1, 1), "b1": HexCoord(2, 1)},
+        )
+        state = engine.state.with_metadata("battles", [battle])
+        state = state.with_metadata("combat_sub_phase", CombatSubPhase.RESOLUTION)
+
+        legal_cpl = engine._system._legal_assign_cpl_actions(state, PLAYER_A, battle)
+        assert any(a.unit_id == "a1" for a in legal_cpl), \
+            "Attacker unit must be assignable for mandatory CPL"
+
+        new_state, events = engine._system._apply_assign_cpl_loss(
+            state,
+            AssignCplLossAction(player=PLAYER_A, battle_id=1, unit_id="a1"),
+        )
+        assert new_state.get_unit("a1") is None, "Unit must be destroyed by mandatory CPL"
+
+        updated_battle = new_state.metadata["battles"][0]
+        if updated_battle.defender_mandatory_cpl > 0:
+            legal_def = engine._system._legal_assign_cpl_actions(
+                new_state, PLAYER_A, updated_battle,
+            )
+            assert any(a.unit_id == "b1" for a in legal_def)

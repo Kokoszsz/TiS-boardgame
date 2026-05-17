@@ -259,3 +259,43 @@ class TestSMPhaseMovement:
         assert sm_moves == [], "No tagged units → no SM moves"
         ends = [a for a in legal if isinstance(a, EndPhaseAction)]
         assert ends, "EndPhaseAction must be available to exit SM phase"
+
+
+class TestSMBudgetZero:
+    """Gap #23: SM with movement_max <= 2 gives 0 MP budget."""
+
+    def test_sm_budget_zero_no_moves(self):
+        """Unit with movement_max=2: SM budget = max(0, 2-2) = 0 → no SM moves."""
+        from tests.conftest import advance_to_phase
+        from hexwar.core.actions import StrategicMoveAction
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, movement=2),
+            make_unit("b1", player=PLAYER_B, q=8, r=8),
+        ])
+        do_actions(engine, DeclareStrategicMovementAction(
+            player=PLAYER_A, unit_id="a1",
+        ))
+        advance_to_phase(engine, "strategic_move_a")
+        legal = engine.get_legal_actions()
+        sm_moves = [a for a in legal if isinstance(a, StrategicMoveAction)]
+        assert sm_moves == [], \
+            "Unit with movement_max=2 has SM budget 0 → no SM moves"
+
+    def test_sm_budget_one_with_movement_3(self):
+        """Unit with movement_max=3: SM budget = 1 → can move 1 hex."""
+        from tests.conftest import advance_to_phase
+        from hexwar.core.actions import StrategicMoveAction
+        engine = make_engine(units=[
+            make_unit("a1", q=1, r=1, movement=3),
+            make_unit("b1", player=PLAYER_B, q=8, r=8),
+        ])
+        do_actions(engine, DeclareStrategicMovementAction(
+            player=PLAYER_A, unit_id="a1",
+        ))
+        advance_to_phase(engine, "strategic_move_a")
+        legal = engine.get_legal_actions()
+        sm_moves = [a for a in legal if isinstance(a, StrategicMoveAction)]
+        assert len(sm_moves) > 0, "SM budget=1 should allow 1-hex moves"
+        for a in sm_moves:
+            assert a.target.distance(HexCoord(1, 1)) <= 1, \
+                "SM budget=1 can only reach adjacent hexes"

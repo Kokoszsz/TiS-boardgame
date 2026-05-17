@@ -302,3 +302,34 @@ class TestEnemyBlocksPathfinding:
         ])
         through_friendly = MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(3, 0))
         assert_action_legal(engine, through_friendly)
+
+
+class TestZOCExitCost:
+    """Gap #21: ZOC exit costs +1 MP on top of terrain cost."""
+
+    def test_leaving_zoc_costs_extra_mp(self):
+        """Unit in enemy ZOC leaving to non-ZOC hex pays terrain + 1."""
+        # a1 at (1,1) with 3 MP. Enemy e1 at (1,2) — ZOC covers (1,1).
+        # Moving from (1,1) to (2,1) should cost 1 (terrain) + 1 (ZOC exit) = 2 MP.
+        # Then unit has 1 MP left.
+        engine = make_engine(units=[
+            make_unit("u1", q=1, r=1, movement=3),
+            make_unit("e1", q=1, r=2, player=PLAYER_B),
+        ])
+        # Move out of ZOC
+        do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(2, 0)))
+        u1 = engine.state.get_unit("u1")
+        # After ZOC exit: spent 2 MP (1 terrain + 1 ZOC exit), so 1 MP left
+        assert u1.movement_left == 1, \
+            f"Expected 1 MP after ZOC exit, got {u1.movement_left}"
+
+    def test_moving_without_zoc_no_extra_cost(self):
+        """Unit NOT in ZOC pays only terrain cost."""
+        engine = make_engine(units=[
+            make_unit("u1", q=1, r=1, movement=3),
+            make_unit("e1", q=5, r=5, player=PLAYER_B),  # far away
+        ])
+        do_actions(engine, MoveAction(player=PLAYER_A, unit_id="u1", target=HexCoord(2, 1)))
+        u1 = engine.state.get_unit("u1")
+        assert u1.movement_left == 2, \
+            f"Expected 2 MP without ZOC, got {u1.movement_left}"
