@@ -66,8 +66,11 @@ class StrategicMovementMixin(MovementMixin):
 
         new_state = state.with_unit_moved(action.unit_id, action.target)
         moved_unit = new_state.get_unit(action.unit_id)
-        # Consume SM tag and remaining MP — SM is one-shot per turn
-        moved_unit = moved_unit.with_movement_left(new_mp).with_strategic_movement(False)
+        moved_unit = (
+            moved_unit.with_movement_left(new_mp)
+            .with_strategic_movement(False)
+            .with_last_active_turn(new_state.turn)
+        )
         new_state = new_state.with_unit(moved_unit)
 
         return new_state, [UnitMoved(

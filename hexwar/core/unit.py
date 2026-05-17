@@ -30,6 +30,7 @@ class Unit:
     movement_max: float = 1.0
     movement_left: float = 0.0
     disorganized: bool = False
+    last_active_turn: int = 0
     strategic_movement: bool = False
 
     def with_position(self, pos: HexCoord) -> Unit:
@@ -41,6 +42,9 @@ class Unit:
 
     def with_disorganized(self, value: bool) -> Unit:
         return dataclasses.replace(self, disorganized=value)
+
+    def with_last_active_turn(self, turn: int) -> Unit:
+        return dataclasses.replace(self, last_active_turn=turn)
 
     def with_movement_left(self, mp: float) -> Unit:
         return dataclasses.replace(self, movement_left=mp)

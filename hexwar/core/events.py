@@ -132,6 +132,11 @@ class DisorganizationRolled(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class UnitReorganized(Event):
+    unit_id: UnitId
+
+
+@dataclass(frozen=True, slots=True)
 class SMTagToggled(Event):
     unit_id: UnitId
     tagged: bool

@@ -151,7 +151,11 @@ class MovementMixin:
         new_mp = reachable.get(action.target, 0)
 
         new_state = state.with_unit_moved(action.unit_id, action.target)
-        moved_unit = new_state.get_unit(action.unit_id).with_movement_left(new_mp)
+        moved_unit = (
+            new_state.get_unit(action.unit_id)
+            .with_movement_left(new_mp)
+            .with_last_active_turn(new_state.turn)
+        )
         new_state = new_state.with_unit(moved_unit)
 
         entrenched = dict(new_state.metadata.get("entrenched", {}))

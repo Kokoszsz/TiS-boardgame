@@ -7,7 +7,7 @@ from hexwar.core.actions import (
     ResolveDisorgRollsAction, RetreatUnitAction, SkipPursuitAction,
     StrategicMoveAction, UndeclareAttackAction,
 )
-from hexwar.core.events import Event
+from hexwar.core.events import Event, UnitReorganized
 from hexwar.core.map import TerrainType
 from hexwar.core.rng import GameRNG
 from hexwar.core.state import GameState
@@ -181,14 +181,36 @@ class WB48System(
     def on_phase_exit(
         self, state: GameState, phase: PhaseDef
     ) -> tuple[GameState, list[Event]]:
+        events: list[Event] = []
+        if phase.id in ("move_a", "move_b"):
+            state, reorg_events = self._reorganize_eligible_units(state, phase.player)
+            events.extend(reorg_events)
         if phase.id in ("combat_a", "combat_b"):
             state = self._cleanup_combat_metadata(state)
         if phase.id in ("strategic_move_a", "strategic_move_b"):
-            # Clear leftover SM tags (rule 11.12: tag valid only this turn)
             for unit in list(state.units.values()):
                 if unit.strategic_movement:
                     state = state.with_unit(unit.with_strategic_movement(False))
-        return state, []
+        return state, events
+
+    def _reorganize_eligible_units(
+        self, state: GameState, player: Player,
+    ) -> tuple[GameState, list[Event]]:
+        """Rule 14.2: remove D from units inactive for one full turn.
+
+        Checked at end of own movement phase. Unit qualifies if
+        last_active_turn < current turn (didn't move or fight since
+        before this turn).
+        """
+        events: list[Event] = []
+        for unit in state.units_of(player):
+            if not unit.disorganized:
+                continue
+            if unit.last_active_turn < state.turn:
+                updated = unit.with_disorganized(False)
+                state = state.with_unit(updated)
+                events.append(UnitReorganized(unit_id=unit.id))
+        return state, events
 
     def should_advance_phase(self, state: GameState) -> bool:
         combat_sub_phase = state.metadata.get("combat_sub_phase")

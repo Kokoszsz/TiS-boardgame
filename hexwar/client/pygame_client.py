@@ -10,7 +10,7 @@ from hexwar.core.actions import (
 )
 from hexwar.core.battle import PostBattlePhase, Side
 from hexwar.core.engine import Engine
-from hexwar.core.events import DisorganizationRolled
+from hexwar.core.events import DisorganizationRolled, UnitReorganized
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
 from hexwar.core.rng import GameRNG
@@ -855,7 +855,12 @@ class PygameClient:
         action = EndPhaseAction(player=self.engine.state.active_player)
         events = self.engine.submit_action(action)
         for e in events:
-            self.event_log.append(str(e))
+            if isinstance(e, UnitReorganized):
+                unit = self.engine.state.get_unit(e.unit_id)
+                name = unit.name if unit else e.unit_id
+                self.event_log.append(f"{name} reorganized (D removed)")
+            else:
+                self.event_log.append(str(e))
         self._deselect()
 
     def _undo(self) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from hexwar.core.actions import (
     Action, AssignCplLossAction, ChooseRetreatSplitAction,
     EndPhaseAction, PursuitAction, ResolveBattleAction,
@@ -23,6 +25,23 @@ from hexwar.systems.wb48.crt import DISORG_THRESHOLD, lookup_crt
 
 
 class ResolutionMixin:
+
+    @staticmethod
+    def _effective_strength(unit) -> int:
+        """Rule 14.2: disorganized unit fights at half strength, rounded up."""
+        raw = unit.stats.get("strength", 1)
+        if unit.disorganized:
+            return math.ceil(raw / 2)
+        return raw
+
+    def _mark_combat_active(
+        self, state: GameState, unit_ids: tuple[UnitId, ...],
+    ) -> GameState:
+        for uid in unit_ids:
+            unit = state.get_unit(uid)
+            if unit is not None:
+                state = state.with_unit(unit.with_last_active_turn(state.turn))
+        return state
 
     def _apply_end_combat_subphase(
         self, state: GameState, action: EndPhaseAction
@@ -60,13 +79,16 @@ class ResolutionMixin:
         defender_ids = battle.defender_ids
 
         atk_str = sum(
-            state.get_unit(uid).stats.get("strength", 1)
+            self._effective_strength(state.get_unit(uid))
             for uid in attacker_ids if state.get_unit(uid)
         )
         def_str = sum(
-            state.get_unit(uid).stats.get("strength", 1)
+            self._effective_strength(state.get_unit(uid))
             for uid in defender_ids if state.get_unit(uid)
         )
+
+        state = self._mark_combat_active(state, attacker_ids)
+        state = self._mark_combat_active(state, defender_ids)
 
         dice = rng.roll_dice(2, 6)
         die1, die2 = dice[0], dice[1]
@@ -132,7 +154,7 @@ class ResolutionMixin:
         unit = state.get_unit(unit_id)
         if not unit or unit.disorganized:
             return state, []
-        updated_unit = unit.with_disorganized(True)
+        updated_unit = unit.with_disorganized(True).with_last_active_turn(state.turn)
         state = state.with_unit(updated_unit)
         event = UnitDisorganized(unit_id=unit_id, battle_id=battle_id)
         return state, [event]
