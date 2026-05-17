@@ -35,10 +35,10 @@ All rules in [wb48_rules_en.md](wb48_rules_en.md). One system, fully native; not
 2. Artillery barrage
 3. Movement ✓
 4. Combat ✓
-5. Strategic movement
+5. Strategic movement ✓
 6. Supply
 
-Currently implemented: 3, 4. Air phase + barrage + supply still missing.
+Currently implemented: 3, 4, 5. Air phase + barrage + supply still missing.
 
 ### 2.2 Movement (sec 4.0) — ✓ done
 Terrain costs, hex-by-hex, MP tracking, friendly stacking on path.
@@ -54,20 +54,23 @@ Declaration sub-phase: fan-in / fan-out, must-attack rules.
 Resolution sub-phase: CRT lookup, dice, results.
 Post-battle pipeline: split (retreat/loss), CPL assignment, retreat movement, pursuit (rule 7.57 partial-elimination handling).
 
-### 2.6 Strategic Movement (sec 11.0) — ☐ NEXT
-- **11.11** New phase after combat
-- **11.12** Eligible units: did NOT move this turn, did NOT fight, did NOT build FF, NOT in enemy ZOC, was tagged with "SM token" during movement phase
-- **11.21** MP reduced by 2 during SM
-- **11.22** Cannot enter enemy ZOC during SM
-- **11.23** Unit performing SM cannot conduct combat afterwards (already past combat phase, so trivially enforced)
+### 2.6 Strategic Movement (sec 11.0) — ✓ done
+- **11.11** Two new phases `strategic_move_a` / `strategic_move_b` after combat
+- **11.12** Eligibility enforced at tagging time: not moved/entrenched (movement_left == movement_max), not in enemy ZOC. SM token via `DeclareStrategicMovementAction` toggle during movement phase
+- **11.21** MP budget = `max(0, movement_max - 2)` in SM phase
+- **11.22** No ZOC entry — `_move_targets_for_unit(block_zoc_entry=True)`
+- **11.23** Trivially enforced (phase past combat)
 
-Implementation outline:
-- New phase `strategic_a`/`strategic_b` in WB48System phase list
-- New action `MoveStrategicAction` OR reuse `MoveAction` gated by phase
-- Track unit metadata: `moved_this_turn`, `fought_this_turn`, `built_ff_this_turn`, `sm_token` flag
-- New mixin `StrategicMovementMixin` in `hexwar/systems/wb48/strategic_movement.py`
-- Update `_legal_move_actions` filter for SM phase: enforce eligibility + ZOC restriction
-- Tests in `tests/test_strategic_movement.py`
+Implementation:
+- [hexwar/systems/wb48/strategic_movement.py](hexwar/systems/wb48/strategic_movement.py) — StrategicMovementMixin
+- Unit fields: `strategic_movement: bool` tag, `movement_left`, `movement_max`
+- DeclareStrategicMovementAction zeroes MP (commits unit) + toggles tag
+- StrategicMoveAction moves unit, consumes tag
+- Unused tags clear on SM phase exit
+- Client: T hotkey + "Tag SM" button; blue "SM" marker on tagged units
+- 14 tests in [tests/test_strategic_movement.py](tests/test_strategic_movement.py)
+
+Not yet enforced: "did NOT fight" condition (no fought_this_turn flag — defer until artillery/combat refactor). Edge case: tagged unit then attacked → tag remains but is harmless (no MP for normal move; SM phase still allows).
 
 ### 2.7 Supply (sec 12.0) — ☐
 - Supply lines via pathfinding (roads/rails unlimited, off-road MP-limited)

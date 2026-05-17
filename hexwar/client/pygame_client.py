@@ -10,7 +10,6 @@ from hexwar.core.actions import (
 )
 from hexwar.core.battle import PostBattlePhase
 from hexwar.core.engine import Engine
-from hexwar.core.events import BattleResolved
 from hexwar.core.hex import HexCoord
 from hexwar.core.map import HexMap, TerrainLayer, TerrainType
 from hexwar.core.rng import GameRNG
@@ -696,13 +695,7 @@ class PygameClient:
         if any(a == action for a in legal):
             events = self.engine.submit_action(action)
             for e in events:
-                if isinstance(e, BattleResolved):
-                    self.event_log.append(
-                        f"Battle #{e.battle_id}: {e.attack_strength}v{e.defense_strength} "
-                        f"dice={e.dice_roll[0]}+{e.dice_roll[1]}={e.dice_total} → {e.result}"
-                    )
-                else:
-                    self.event_log.append(str(e))
+                self.event_log.append(str(e))
         else:
             self.event_log.append("[INVALID] Cannot resolve that battle")
 

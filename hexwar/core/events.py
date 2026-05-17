@@ -77,6 +77,12 @@ class BattleResolved(Event):
     result: CombatResult
     details: dict[str, Any] | None = None
 
+    def __str__(self) -> str:
+        return (
+            f"Battle #{self.battle_id}: {self.attack_strength}v{self.defense_strength} "
+            f"dice={self.dice_roll[0]}+{self.dice_roll[1]}={self.dice_total} → {self.result}"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RetreatSplitChosen(Event):

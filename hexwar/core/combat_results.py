@@ -17,6 +17,7 @@ class CombatResult:
     victorious_attacker: bool = False
     victorious_defender: bool = False
     victorious_tie: bool = False
+    ratio: str = ""
 
     @staticmethod
     def _match_casualties(part: str) -> int:
@@ -37,7 +38,7 @@ class CombatResult:
         return victorious_attacker, victorious_defender, victorious_tie
 
     @classmethod
-    def from_string(cls, result_str: str) -> "CombatResult":
+    def from_string(cls, result_str: str, ratio: str) -> "CombatResult":
         """Parse result string like 'A2/-' or '-1/B3D'."""
         attacker, defender = result_str.split("/")
 
@@ -58,6 +59,7 @@ class CombatResult:
             victorious_attacker=victorious_attacker,
             victorious_defender=victorious_defender,
             victorious_tie=victorious_tie,
+            ratio=ratio,
         )
     
     def __str__(self) -> str:
@@ -82,7 +84,7 @@ class CombatResult:
         if self.defender_casualties:
             defender_parts.append(f"-{self.defender_casualties}")
         parts = ["".join(attacker_parts), "".join(defender_parts)]
-        return f"{victory_text} {'/'.join(parts) if parts else '-'}"
+        return f"{victory_text} {'/'.join(parts) if parts else '-'} (Ratio: {self.ratio})"
 
         
 
